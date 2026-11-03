@@ -1,0 +1,276 @@
+/* Material You components at 80%; sidebar widths at 90%. */
+html,body{height:100%;overflow:hidden}
+body.auth-pending{overflow:auto;display:flex;align-items:center;justify-content:center;padding:19.2px 12.8px;min-height:100dvh}
+body:has(#authCard:not([hidden])){overflow:auto;display:flex;align-items:center;justify-content:center;padding:19.2px 12.8px;min-height:100dvh}
+a{text-decoration:none;color:var(--md-primary)}
+.ga-main-body{padding:9.6px 0 19.2px}
+.hero{display:flex;justify-content:space-between;align-items:center;gap:19.2px}
+/* The hero stays pinned while the page scrolls, with a blurred backdrop that fades into the content. */
+.hero{position:sticky;top:-9.6px;z-index:6;margin:0 0 22.4px;padding:19.2px 0 16px;
+  /* The scroller keeps 9.6px top padding; the negative offset closes that gap so no
+     scrolled content peeks above the pinned header. */
+  background:var(--md-surface);background:color-mix(in srgb, var(--md-surface) 92%, transparent);
+  -webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(18px) saturate(150%)}
+.hero::after{content:"";position:absolute;left:0;right:0;top:100%;height:22.4px;pointer-events:none;
+  background:linear-gradient(to bottom, color-mix(in srgb, var(--md-surface) 92%, transparent), transparent)}
+.hero-actions{display:flex;align-items:center;gap:9.6px;flex-wrap:wrap}
+.member-search input{min-width:168px}
+@supports not (background: color-mix(in srgb, red 50%, blue)){.hero{background:var(--md-surface)}
+  .hero::after{background:linear-gradient(to bottom, var(--md-surface), transparent)}}
+.hero h1{font-size:22.4px;font-weight:600;letter-spacing:-.02em;margin:6.4px 0 9.6px;color:var(--md-on-surface)}
+.member-hero{position:sticky;top:-9.6px;z-index:6;margin:0 0 19.2px;padding:19.2px 0 14.4px;
+  background:var(--md-surface);background:color-mix(in srgb, var(--md-surface) 92%, transparent);
+  -webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(18px) saturate(150%)}
+.member-hero::after{content:"";position:absolute;left:0;right:0;top:100%;height:19.2px;pointer-events:none;
+  background:linear-gradient(to bottom, color-mix(in srgb, var(--md-surface) 92%, transparent), transparent)}
+.member-hero h1{margin:0}
+.member-hero #memberLogout{flex:0 0 auto}
+p{color:var(--md-on-surface-variant);line-height:1.6}
+.eyebrow{display:none}
+.date-box{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--md-surface-low);padding:16px;border-radius:var(--md-radius-xl)}
+.date-box label{width:100%;font-size:11.2px;color:var(--md-secondary)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12.8px;margin:0 0 25.6px}
+.stats>div{padding:16px 19.2px;background:var(--md-secondary-container);color:var(--md-on-primary-container);border-radius:var(--md-radius-xl)}
+.stats strong{font-size:22.4px;font-weight:600;margin-right:9.6px}
+.stats span{font-size:11.2px;color:var(--md-secondary)}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12.8px;margin-bottom:12.8px}
+h2{font-size:16px;font-weight:600;margin:0}
+.section-head>div{display:flex;gap:8px}
+.shifts{display:grid;gap:12.8px}
+.card{background:var(--md-surface-high);border:0;border-radius:var(--md-radius-xl);padding:19.2px;box-shadow:var(--md-shadow)}
+.shift-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.time{font-size:19.2px;font-weight:600;color:var(--md-primary)}
+.location{margin-top:6.4px;font-size:11.2px;color:var(--md-on-surface-variant)}
+.badge{display:inline-flex;align-items:center;background:var(--md-secondary-container);color:var(--md-on-primary-container);border-radius:999px;padding:5.6px 12px;font-size:11.2px;line-height:1.4;white-space:nowrap}
+.members{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;padding-top:16px;border-top:0.8px solid var(--md-surface-low)}
+.member{display:inline-flex;align-items:center;background:var(--md-surface-low);color:var(--md-on-surface-variant);padding:6.4px 12px;border-radius:999px;font-size:11.2px;line-height:1.4;white-space:nowrap}
+.member.checked{background:var(--md-primary-container);color:var(--md-on-primary-container)}
+/* Late/absent only recolour the chip; the label stays accurate to the check-in record. */
+.member.late,.member.checked.late{background:#fff3c4;color:#8a6000}
+.member.absent,.member.checked.absent{background:#ffdcdc;color:#a41212}
+.member.pending{background:var(--md-surface-low);color:var(--md-on-surface-variant)}
+.check-form{display:flex;gap:9.6px;margin-top:16px}
+.check-form select{flex:1;min-width:0}
+.empty{text-align:center;padding:51.2px 19.2px;background:var(--md-surface-low);border-radius:var(--md-radius-xl)}
+.empty h2{margin-bottom:8px}
+label{display:block;font-size:11.2px;color:var(--md-secondary)}
+input,textarea,select{font:inherit;border:0;border-radius:var(--md-radius-lg);padding:11.2px 12.8px;background:var(--md-surface-low);color:var(--md-on-surface);max-width:100%;outline:1.6px solid transparent;transition:outline-color 150ms ease}
+form label:not(.outlined-field) input:not([type=checkbox]),form label textarea{display:block;width:100%;margin:6.4px 0 14.4px}
+input:focus,textarea:focus,select:focus{outline-color:var(--md-primary)}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,a:focus-visible{outline:1.6px solid var(--md-primary);outline-offset:2.4px}
+dialog{background:var(--md-surface-high);color:var(--md-on-surface);border:0;border-radius:var(--md-radius-xl);box-shadow:var(--md-shadow);width:416px;max-width:calc(100% - 25.6px);padding:22.4px;max-height:90dvh}
+dialog::backdrop{background:rgba(25,28,30,.4)}
+#clearStatus{color:var(--md-error);min-height:19.2px}#clearDialog p{line-height:1.7}#clearDialog strong{color:var(--md-error)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12.8px}
+#status,#formStatus,#authStatus{color:var(--md-error);min-height:19.2px}
+.actions{display:flex;gap:6.4px;margin-top:14.4px}
+[hidden]{display:none!important}
+@media(max-width:900px){.ga-app{grid-template-columns:216px 1fr}.hero{align-items:stretch;flex-direction:column}.member-hero{flex-direction:row;align-items:center}.stats>div{padding:14.4px 11.2px}.stats strong{display:block}.date-box{padding:12.8px}}
+@media(max-width:650px){.ga-app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.ga-nav{padding:9.6px 12.8px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:6.4px}.ga-brand{margin:0}.ga-brand h1{font-size:14.4px}.ga-brand img{width:28.8px;height:28.8px}.ga-nav nav{flex-direction:row}.ga-nav .panel-footer{grid-column:1/-1;padding:0}.ga-nav-item{width:auto;padding:6.4px 11.2px}.ga-main{padding:12.8px}.hero{gap:9.6px;margin-bottom:16px}.hero h1{font-size:20.8px}.hero p{margin:3.2px 0}.stats{gap:6.4px;margin-bottom:19.2px}.stats>div{padding:12.8px 9.6px}.stats strong{font-size:19.2px}.stats span{font-size:9.6px}.card{padding:16px}.shift-top{flex-wrap:wrap}.check-form{flex-direction:column}.time{font-size:16.8px}.admin-board{padding:22.4px 19.2px;grid-template-columns:1fr;gap:22.4px}.admin-board-right{min-height:0}}
+.weekly-notice{background:var(--md-secondary-container);padding:12.8px 16px;border-radius:var(--md-radius-lg);color:var(--md-secondary)}
+.weekly-config{margin-bottom:16px}.weekly-times{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12.8px;margin-top:12.8px}.weekly-slot{border:0.8px solid var(--md-outline);border-radius:var(--md-radius-lg);padding:11.2px;min-width:0}.weekly-slot legend{color:var(--md-primary);padding:0 4.8px;font-size:11.2px}.weekly-slot input{width:100%;min-width:0}.weekly-table-wrap{overflow:auto;background:var(--md-surface-high);border-radius:var(--md-radius-xl);box-shadow:var(--md-shadow)}.weekly-table-tools{display:flex;align-items:center;justify-content:space-between;gap:12.8px;padding:12.8px 16px;border-bottom:0.8px solid var(--md-surface-low);color:var(--md-on-surface-variant);font-size:11.2px;line-height:1.6}.weekly-table-tools .actions{margin-top:0;flex-wrap:wrap}@media(max-width:650px){.weekly-table-tools{flex-direction:column;align-items:flex-start}}
+.weekly-table{width:100%;min-width:800px;border-collapse:separate;border-spacing:0;text-align:left}.weekly-table caption{text-align:left;padding:16px;color:var(--md-secondary);font-size:11.2px}.weekly-table th{padding:12.8px;background:var(--md-secondary-container);color:var(--md-on-primary-container);font-weight:600;white-space:nowrap}.weekly-table td{padding:6.4px;border-bottom:0.8px solid var(--md-surface-low)}.weekly-table textarea{width:100%;min-width:88px;resize:vertical;padding:9.6px;font-size:11.2px;line-height:1.7}.review-check{display:flex;align-items:center;gap:8px;margin-top:16px}.review-check input{flex:0 0 16px;width:16px;height:16px;margin:0;padding:0;accent-color:var(--md-primary)}.publish-card{margin-top:22.4px}.publish-form{display:flex;align-items:center;gap:12.8px;flex-wrap:wrap}.publish-form label{flex:1;min-width:160px}#weeklyStatus{min-height:19.2px;color:var(--md-primary);line-height:1.7}@media(max-width:1100px){.weekly-times{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.ga-nav nav{flex-wrap:wrap}.weekly-times{gap:8px}.weekly-slot{padding:8px}}
+
+.rules-card{max-width:640px}.rules-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12.8px;margin:12.8px 0}#rulesStatus,#specialStatus,#memberFormStatus{color:var(--md-primary);min-height:19.2px;line-height:1.7}@media(max-width:650px){.rules-grid{grid-template-columns:1fr}}
+.ga-main,.ga-main-body{min-width:0}
+.member-account{display:flex;align-items:center;justify-content:space-between;gap:12.8px}.member-account p{margin:6.4px 0 0}.member-account .actions{margin-top:0}#passwordStatus,#memberLoginStatus{color:var(--md-error);min-height:19.2px}#membersStatus{color:var(--md-primary);line-height:1.7}@media(max-width:650px){.member-account{flex-direction:column;align-items:flex-start}.member-account .actions{flex-wrap:wrap}}
+
+/* Overview: weekly board tones and per-member detail rows. */
+.overview-stats>div:first-child{background:var(--md-primary-container);color:var(--md-on-primary-container)}
+.week-head{margin-top:22.4px}
+.week-board{display:flex;flex-direction:column;gap:8px;overflow-x:auto;padding-bottom:4.8px}
+.week-row{display:grid;grid-template-columns:44px repeat(7,minmax(0,1fr));gap:12px;align-items:stretch}
+.week-head-row{align-items:end}
+.week-slot-label{font-size:11.2px;color:var(--md-secondary);font-weight:600;padding-top:12.8px;white-space:nowrap}
+.week-cell{display:flex;flex-direction:column;justify-content:stretch;min-width:0;padding:6.4px;border-radius:var(--md-radius-lg);background:var(--md-surface-low)}
+.week-cell.today{outline:1.6px solid var(--md-primary)}
+.week-cell-empty{min-height:1px}
+.week-day-head{font-size:11.2px;color:var(--md-secondary);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.week-card{flex:1;display:flex;flex-direction:column;gap:2.4px;width:100%;text-align:left;border:0;border-radius:var(--md-radius-sm);padding:9.6px;font:inherit;font-size:11.2px;line-height:1.5;cursor:pointer;color:var(--md-on-surface)}
+.week-card.future{background:#dbeefd;color:#17495e}
+.week-card.current{background:#ffffff;outline:1.6px solid #186078}
+.week-card.warn{background:#fff3c4}
+.week-card.danger{background:#ffdcdc}
+.week-card.ok{background:#ddf3dc}
+.week-card-time{font-size:12px;font-weight:600}
+.week-card-count{color:var(--md-on-surface-variant);font-size:11.2px}
+.week-card-name{display:block;flex:0 0 1.7em;height:1.7em;line-height:1.7em;font-size:11.2px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.week-card-name.blank{visibility:hidden}
+.week-card-more{font-size:11.2px;color:var(--md-on-surface-variant)}
+.week-card-name.late{color:#8a6000}
+.week-card-name.absent{color:#a41212}
+.week-card p{margin:0}
+.detail-members{display:flex;flex-direction:column;gap:6.4px;margin-top:9.6px}
+.detail-member{display:grid;grid-template-columns:1fr auto auto;gap:12.8px;align-items:center;padding:9.6px 12.8px;border-radius:var(--md-radius-sm);background:var(--md-surface-low)}
+.detail-member.normal{background:#ddf3dc}
+.detail-member.late{background:#fff3c4}
+.detail-member.absent{background:#ffdcdc}
+.detail-member.pending{background:var(--md-surface-low)}
+.detail-status{font-size:11.2px;font-weight:600;white-space:nowrap}
+.detail-member.normal .detail-status{color:#22632a}
+.detail-member.late .detail-status{color:#8a6000}
+.detail-member.absent .detail-status{color:#a41212}
+.detail-time{font-size:11.2px;color:var(--md-on-surface-variant);white-space:nowrap}
+@media(max-width:650px){.week-row{grid-template-columns:32px repeat(7,minmax(104px,1fr))}}
+
+.shift-timeline{width:100%;min-width:0;margin:0 0 12.8px;background:transparent;overflow:hidden;contain:layout paint}
+.shift-timeline svg{display:block;width:100%;overflow:hidden;font-family:inherit;font-size:12px;font-weight:300}
+.shift-timeline text{font-weight:300}
+#status:empty{display:none}
+
+/* Field duty (外勤): member registration and the admin month board. */
+.field-card{margin-top:19.2px;max-width:640px;display:flex;flex-direction:column;gap:12.8px}
+.field-card h2{margin-bottom:0}
+#fieldButton{align-self:flex-start}
+#fieldStatus{color:var(--md-on-surface-variant);min-height:19.2px;line-height:1.7}
+.field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+.field-person{padding:12.8px 16px;border-radius:var(--md-radius-lg);display:flex;flex-direction:column;gap:3.2px;min-width:0}
+.field-person.done{background:#cfe7fb;color:#14455c}
+.field-person.missing{background:#ffdcdc;color:#a41212}
+.field-person strong{font-size:12.8px;font-weight:600;white-space:nowrap}
+.field-person span{font-size:11.2px;white-space:nowrap}
+
+/* Permission groups shown on each account card and in the editor dialog. */
+.permission-tags{display:flex;flex-wrap:wrap;gap:4.8px;margin-top:6.4px}
+.permission-tag{display:inline-flex;align-items:center;font-size:11.2px;line-height:1.4;padding:3.2px 9.6px;border-radius:999px;background:var(--md-primary-container);color:var(--md-on-primary-container);white-space:nowrap}
+.permission-tag.muted{background:var(--md-surface-low);color:var(--md-on-surface-variant)}
+.permission-list{display:flex;flex-direction:column;gap:8px;margin:9.6px 0}
+.permission-option{display:flex;align-items:flex-start;gap:9.6px;padding:9.6px 11.2px;border-radius:var(--md-radius-lg);background:var(--md-surface-low);cursor:pointer}
+.permission-option input{width:16px;height:16px;margin:1.6px 0 0;flex:0 0 16px;accent-color:var(--md-primary)}
+.permission-option span{display:flex;flex-direction:column;gap:2.4px}
+.permission-option strong{font-size:11.2px;font-weight:600}
+.permission-option small{font-size:11.2px;color:var(--md-on-surface-variant)}
+
+/* Collapsible permission tree in the account dialog. */
+.permission-node{display:flex;flex-direction:column;gap:4.8px}
+.permission-node .permission-option{position:relative}
+.permission-children{display:flex;flex-direction:column;gap:6.4px;margin:4.8px 0 4.8px 19.2px;
+  padding-left:12.8px;border-left:1.6px solid var(--md-surface-low)}
+.permission-node.depth-2>.permission-option strong{font-weight:600}
+.permission-node.depth-2 .permission-children{margin-left:12.8px}
+.permission-toggle{margin-left:auto;border:0;background:transparent;color:var(--md-primary);
+  font:inherit;font-size:11.2px;font-weight:600;cursor:pointer;padding:2.4px 8px;border-radius:999px;white-space:nowrap}
+.permission-toggle:hover{background:var(--md-secondary-container)}
+.permission-option input{accent-color:var(--md-primary)}
+#permissionList{max-height:52vh;overflow:auto;padding-right:4.8px}
+
+/* Field-duty button: from Uiverse.io by ryota1231, with a three-stage label and a
+   locked green "registered" state. */
+.animated-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 36px;
+  border: 4px solid;
+  border-color: transparent;
+  font-family: inherit;
+  font-size: 16px;
+  background-color: var(--md-surface-high);
+  border-radius: 100px;
+  font-weight: 600;
+  color: #1f387e;
+  box-shadow: 0 0 0 2px #ffffff;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.animated-button svg {
+  position: absolute;
+  width: 24px;
+  fill: #1f387e;
+  z-index: 9;
+  transition: all 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.animated-button .arr-1 { right: 16px; }
+.animated-button .arr-2 { left: -25%; }
+.animated-button .circle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  background-color: #c5e5e4;
+  border-radius: 50%;
+  opacity: 0;
+  transition: all 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.animated-button .text {
+  position: relative;
+  z-index: 1;
+  transform: translateX(-12px);
+  transition: all 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.animated-button:hover {
+  box-shadow: 0 0 0 12px transparent;
+  color: #212121;
+  border-radius: 12px;
+}
+.animated-button:hover .arr-1 { right: -25%; }
+.animated-button:hover .arr-2 { left: 16px; }
+.animated-button:hover .text { transform: translateX(12px); }
+.animated-button:hover svg { fill: #1f387e; }
+.animated-button:active {
+  scale: 0.95;
+  box-shadow: 0 0 0 4px greenyellow;
+}
+.animated-button:hover .circle { width: 220px; height: 220px; opacity: 1; }
+/* Locked success state:浅绿配色，文字居中，不再响应悬停动画。 */
+.animated-button.registered,
+.animated-button.registered:hover,
+.animated-button.registered:active {
+  background-color: #c8efc8;
+  color: #1f5b25;
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px #a7dfa7;
+  cursor: default;
+  scale: 1;
+}
+.animated-button.registered svg { display: none; }
+.animated-button.registered .circle { opacity: 0; width: 20px; height: 20px; }
+.animated-button.registered .text,
+.animated-button.registered:hover .text { transform: none; }
+.animated-button.registered:disabled { opacity: 1; }
+
+/* Inline editor opened from an overview member row or a field-duty card. */
+.detail-member.clickable,.field-person.clickable{cursor:pointer}
+.detail-member.clickable:hover{outline:1.6px solid var(--md-primary)}
+.field-person.clickable:hover{outline:1.6px solid var(--md-primary)}
+.status-options{display:flex;flex-wrap:wrap;gap:8px;margin:9.6px 0 12.8px}
+.status-option{display:flex;align-items:center;gap:6.4px;padding:9.6px 12.8px;border-radius:var(--md-radius-lg);
+  background:var(--md-surface-low);cursor:pointer;font-size:11.2px}
+.status-option input{width:16px;height:16px;margin:0;accent-color:var(--md-primary)}
+.field-person .manual-flag{font-size:11.2px;opacity:.8}
+
+/* Stat tiles size to their content instead of stretching across the page. */
+.stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+.overview-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+/* Single-tile boards (field duty) keep the tile at the same width as an overview tile. */
+.field-stats{display:flex}
+.field-stats>div{flex:0 0 auto;min-width:240px}
+.field-stats>div{padding:16px 19.2px}
+@media(max-width:1100px){.field-stats{max-width:none}}
+/* The week board needs room for three names per card; keep it readable on desktop. */
+.week-day-head{min-width:0}
+/* Boards with two or three tiles keep each tile at a readable width. */
+.stats{grid-template-columns:repeat(auto-fit,minmax(220px,320px))}
+.stats{justify-content:start}
+.field-stats{display:flex}
+.field-stats>div{flex:0 0 auto;min-width:240px}
+
+/* Login card: keep the action next to the fields and leave room on the left. */
+.admin-board { align-items: start; min-height: 0; padding-top: 28px; padding-bottom: 26.4px; }
+.admin-board-left h1 { margin-top: 22.4px; }
+.admin-board-right { justify-content: flex-start; min-height: 0; }
+.admin-board-right .btn { align-self: flex-end; margin-top: 12px; }
+/* Empty column boards should not stretch the whole row height. */
+.week-row { align-items: stretch; }
+/* Cards in the week board size to their content but stay equal within a row. */
+.week-cell { justify-content: flex-start; }
+
+/* Empty week cells stay blank so the board reads as a calendar, not a grid of bars. */
+.week-cell:not(:has(.week-card)) { background: transparent; padding: 0; }
+.week-cell:has(.week-card) { display: flex; }
+.week-card { align-self: stretch; }

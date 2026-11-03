@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+data/
+.oauth_client.json
+*.log
+*.log.*
+botpy.log*
+*.bak
+*.sqlite
+*.sqlite-*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+!.env.example
+# Runtime data and imported rosters never belong in the repository.
