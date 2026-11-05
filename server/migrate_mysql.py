@@ -9,7 +9,8 @@ from pathlib import Path
 from server import db
 
 TABLES = ('settings', 'users', 'member_accounts', 'oauth_clients', 'visitors',
-          'chats', 'messages', 'shifts', 'attendance', 'weekly_instances')
+          'chats', 'messages', 'shifts', 'attendance', 'attendance_history', 'operation_log',
+          'weekly_instances')
 
 
 def migrate(source):

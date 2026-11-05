@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
-from server import admin_store, chat_store, duty_settings, field_duty, overview, permissions, schedule_store, weekly_store, member_store, security
+from server import admin_store, chat_store, db, duty_settings, field_duty, operation_log, overview, permissions, schedule_store, swap_store, system_clock, weekly_store, member_store, security
 from server.mcp_client import McpError, OutlineMcpClient, normalize_mcp_url
 from server.oauth import exchange_code, start_oauth
 
@@ -52,6 +52,9 @@ def _chat_helpers():
 async def lifespan(_app: FastAPI):
     admin_store.load()
     permissions.ensure_defaults()
+    system_clock.load()
+    with db.read() as conn:
+        operation_log.init(conn)
     result = member_store.provision()
     print(f"[members] 新建普通用户账号 {result['created']} 个，保留现有账号 {result['existing']} 个")
     slug = admin_store.path()
@@ -509,6 +512,21 @@ def _admin_gate(request: Request) -> bool:
     return request.session.get("admin_gate") == admin_store.path()
 
 
+def _log(actor, action, detail='', role='admin'):
+    """Record an operation; the actor is whatever name the session belonged to."""
+    operation_log.record(actor, action, detail, role)
+
+
+def _shift_summary(body):
+    """Human-readable description of a shift payload."""
+    names = body.get('members') if isinstance(body, dict) else None
+    people = '、'.join(str(n) for n in names) if isinstance(names, list) else ''
+    if not isinstance(body, dict):
+        return ''
+    return (f"{body.get('day', '')} {body.get('start', '')}–{body.get('end', '')}"
+            + (f"（{people}）" if people else ''))
+
+
 def _session_account(request: Request) -> str:
     """The account behind this admin session, from the signed cookie or the session."""
     name = _admin_from_cookie(request)
@@ -577,6 +595,7 @@ async def admin_status(request: Request) -> dict[str, Any]:
         "gate": _admin_gate(request),
         "username": name or _admin_username(request) if name else "",
         "permissions": sorted(permissions.permissions_of(name)) if name else [],
+        "now": system_clock.public(),
         "can_grant": bool(name and permissions.has(name, "accounts_protected")),
     }
 
@@ -599,6 +618,7 @@ async def admin_register(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     request.session["admin_ok"] = True
     request.session["admin_username"] = str(body.get("username") or "").strip()
+    _log(request.session["admin_username"], '创建管理员账号', '首次注册并获得全部权限')
     response = JSONResponse({"ok": True, "username": request.session["admin_username"]})
     _set_admin_cookie(response, request.session["admin_username"])
     return response
@@ -623,6 +643,7 @@ async def admin_login(request: Request) -> JSONResponse:
         ADMIN_LIMITER.fail(key)
         raise HTTPException(status_code=403, detail="该账号没有管理员权限")
     ADMIN_LIMITER.reset(key)
+    _log(username, '登录管理端')
     request.session["admin_ok"] = True
     request.session["admin_username"] = username
     response = JSONResponse({"ok": True, "username": username})
@@ -632,6 +653,7 @@ async def admin_login(request: Request) -> JSONResponse:
 
 @app.post("/api/admin/logout")
 async def admin_logout(request: Request) -> JSONResponse:
+    _log(_admin_username(request), '退出管理端')
     request.session.pop("admin_ok", None)
     request.session.pop("admin_username", None)
     response = JSONResponse({"ok": True})
@@ -651,6 +673,7 @@ async def admin_add_user(request: Request) -> dict[str, Any]:
     body = await request.json()
     try:
         admin_store.add_user(str(body.get("username") or ""), str(body.get("password") or ""))
+        _log(_admin_username(request), '新增管理员账号', str(body.get("username") or ""))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "usernames": admin_store.usernames()}
@@ -665,6 +688,7 @@ async def admin_update_user(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="不能修改当前登录的管理员")
     try:
         name = admin_store.update_user(old, str(body.get("username") or ""), str(body.get("password") or ""))
+        _log(_admin_username(request), '修改管理员账号', f'{old} → {name}')
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "username": name, "usernames": admin_store.usernames()}
@@ -677,6 +701,7 @@ async def admin_delete_user(request: Request) -> dict[str, Any]:
     name = str(body.get("username") or "").strip()
     try:
         admin_store.delete_user(name, str(request.session.get("admin_username") or ""))
+        _log(_admin_username(request), '删除管理员账号', name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "usernames": admin_store.usernames()}
@@ -799,6 +824,20 @@ def _schedule_error(exc):
     return HTTPException(status_code=400, detail=str(exc) or "排班数据格式不正确")
 
 
+@app.get("/api/admin/logs")
+async def admin_logs(request: Request, limit: int = 300, actor: str = "", q: str = ""):
+    _require_admin(request)
+    limit = max(1, min(int(limit or 300), 1000))
+    return {"items": operation_log.list_entries(limit, actor.strip(), q.strip()),
+            "actors": operation_log.actors()}
+
+
+@app.get("/api/admin/anomalies")
+async def admin_anomalies(request: Request, weeks: int = 2):
+    _require_admin(request)
+    return overview.anomaly_stats(weeks)
+
+
 @app.get("/api/admin/overview")
 async def admin_overview(request: Request, month: str = ""):
     _require_permission(request, "schedule")
@@ -815,6 +854,7 @@ async def schedules_get(request: Request, day: str):
         return {
             "items": schedule_store.list_day(day, name),
             "rules": duty_settings.load() if name is not None else None,
+            "now": system_clock.public(),
         }
     except ValueError as exc:
         raise _schedule_error(exc) from exc
@@ -829,6 +869,28 @@ async def special_schedules_get(request: Request, from_day: str = ""):
         raise _schedule_error(exc) from exc
 
 
+@app.get("/api/admin/clock")
+async def admin_clock_get(request: Request):
+    _require_permission(request, "schedule")
+    return system_clock.public()
+
+
+@app.put("/api/admin/clock")
+async def admin_clock_save(request: Request):
+    _require_permission(request, "schedule")
+    body = await request.json()
+    try:
+        state = system_clock.save(
+            automatic=body.get("automatic") is not False,
+            hour=body.get("hour", 0), minute=body.get("minute", 0),
+            day=str(body.get("date") or "") or None)
+        _log(_admin_username(request), '修改系统时间',
+             '自动设置' if state['automatic'] else f"{state['date']} {state['hour']:02d}:{state['minute']:02d}")
+        return state
+    except (TypeError, ValueError) as exc:
+        raise _schedule_error(exc) from exc
+
+
 @app.get("/api/admin/rules")
 async def admin_rules_get(request: Request):
     _require_permission(request, "schedule")
@@ -839,7 +901,10 @@ async def admin_rules_get(request: Request):
 async def admin_rules_save(request: Request):
     _require_permission(request, "schedule")
     try:
-        return duty_settings.save(await request.json())
+        rules = duty_settings.save(await request.json())
+        _log(_admin_username(request), '修改值班时间设置',
+             f"提前 {rules['early_minutes']} 分 / 迟到 {rules['late_minutes']} 分 / 旷班 {rules['absent_minutes']} 分")
+        return rules
     except (ValueError, TypeError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -849,22 +914,37 @@ async def schedule_check_in(shift_id: int, request: Request):
     name = _require_member(request)
     try:
         stamp, chained = schedule_store.check_in_with_chain(shift_id, name)
+        _log(name, '到岗签到',
+             f"班次 #{shift_id}" + (f"，并自动签到 {len(chained)} 个连班" if chained else ''),
+             role='member')
         return {"checked_at": stamp, "chained": chained}
     except (ValueError, LookupError) as exc:
         raise _schedule_error(exc) from exc
 
 
+@app.get("/api/admin/attendance-history")
+async def admin_attendance_history(request: Request):
+    _require_permission(request, "schedule")
+    return {"items": schedule_store.history()}
+
+
 @app.delete("/api/admin/schedules")
 async def schedules_clear(request: Request):
     _require_permission(request, "schedule")
-    return schedule_store.clear_all()
+    result = schedule_store.clear_all()
+    _log(_admin_username(request), '清除所有排班',
+         f"删除 {result['deleted']} 个班次，归档 {result.get('archived', 0)} 条打卡")
+    return result
 
 
 @app.post("/api/admin/schedules")
 async def schedule_create(request: Request):
     _require_permission(request, "schedule")
     try:
-        return {"id": schedule_store.save(await request.json())}
+        body = await request.json()
+        shift_id = schedule_store.save(body)
+        _log(_admin_username(request), '新增班次', _shift_summary(body))
+        return {"id": shift_id}
     except (ValueError, TypeError, LookupError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -874,7 +954,9 @@ async def special_schedule_create(request: Request):
     _require_permission(request, "schedule")
     body = await request.json()
     try:
-        return {"id": schedule_store.save({**body, "special": True})}
+        shift_id = schedule_store.save({**body, "special": True})
+        _log(_admin_username(request), '新增特殊排班', _shift_summary(body))
+        return {"id": shift_id}
     except (ValueError, TypeError, LookupError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -884,7 +966,9 @@ async def special_schedule_update(shift_id: int, request: Request):
     _require_permission(request, "schedule")
     body = await request.json()
     try:
-        return {"id": schedule_store.save({**body, "special": True}, shift_id)}
+        schedule_store.save({**body, "special": True}, shift_id)
+        _log(_admin_username(request), '修改特殊排班', f'#{shift_id} {_shift_summary(body)}')
+        return {"id": shift_id}
     except (ValueError, TypeError, LookupError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -894,6 +978,7 @@ async def special_schedule_delete(shift_id: int, request: Request):
     _require_permission(request, "schedule")
     try:
         schedule_store.delete(shift_id)
+        _log(_admin_username(request), '删除特殊排班', f'#{shift_id}')
         return {"ok": True}
     except LookupError as exc:
         raise _schedule_error(exc) from exc
@@ -903,7 +988,10 @@ async def special_schedule_delete(shift_id: int, request: Request):
 async def schedule_update(shift_id: int, request: Request):
     _require_permission(request, "schedule")
     try:
-        return {"id": schedule_store.save(await request.json(), shift_id)}
+        body = await request.json()
+        schedule_store.save(body, shift_id)
+        _log(_admin_username(request), '修改班次', f'#{shift_id} {_shift_summary(body)}')
+        return {"id": shift_id}
     except (ValueError, TypeError, LookupError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -913,6 +1001,7 @@ async def schedule_delete(shift_id: int, request: Request):
     _require_permission(request, "schedule")
     try:
         schedule_store.delete(shift_id)
+        _log(_admin_username(request), '删除班次', f'#{shift_id}')
         return {"ok": True}
     except LookupError as exc:
         raise _schedule_error(exc) from exc
@@ -929,6 +1018,8 @@ async def weekly_save(request: Request):
     _require_permission(request, "schedule")
     try:
         roster = weekly_store.save(await request.json())
+        _log(_admin_username(request), '保存每周排班模板',
+             f"{len(roster.get('slots') or [])} 个班次")
         # Only after the reviewed roster is stored do we create missing duty accounts.
         created = member_store.create_missing(
             {name for slot in roster['slots'] for names in slot['days'] for name in names})
@@ -942,7 +1033,12 @@ async def weekly_publish(request: Request):
     _require_permission(request, "schedule")
     try:
         body = await request.json()
-        return weekly_store.publish_until(str(body.get("end_date") or ""))
+        result = weekly_store.publish_until(
+            str(body.get("end_date") or ""), str(body.get("start_date") or "") or None)
+        _log(_admin_username(request), '生成排班',
+             f"{body.get('start_date') or '今天'} 至 {body.get('end_date') or ''}："
+             f"新增/覆盖 {result['created']} 个，跳过 {result['skipped']} 个")
+        return result
     except (ValueError, TypeError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -956,10 +1052,11 @@ def _require_member(request: Request) -> str:
 
 @app.get("/api/member/status")
 async def member_status(request: Request):
+    clock = system_clock.public()
     try:
-        return {"logged_in": True, "username": _require_member(request)}
+        return {"logged_in": True, "username": _require_member(request), "now": clock}
     except HTTPException:
-        return {"logged_in": False, "username": ""}
+        return {"logged_in": False, "username": "", "now": clock}
 
 
 @app.post("/api/member/login")
@@ -974,6 +1071,7 @@ async def member_login(request: Request):
         MEMBER_LIMITER.fail(key)
         raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
     MEMBER_LIMITER.reset(key)
+    _log(name, '登录值班账号', role='member')
     request.session["member_username"] = name
     request.session["member_version"] = version
     return {"ok": True, "username": name}
@@ -985,10 +1083,37 @@ async def member_field_duty(request: Request):
     return field_duty.member_status(name)
 
 
+@app.get("/api/member/field-duty/pending")
+async def member_field_pending(request: Request):
+    _require_member(request)
+    return field_duty.pending()
+
+
+@app.post("/api/member/field-duty/pending/{username}")
+async def member_field_confirm(username: str, request: Request):
+    _require_member(request)
+    try:
+        result = field_duty.confirm(username.strip())
+        _log(_require_member(request), '确认外勤', username.strip(), role='member')
+        return result
+    except LookupError as exc:
+        raise _schedule_error(exc) from exc
+
+
+@app.delete("/api/member/field-duty/pending/{username}")
+async def member_field_reject(username: str, request: Request):
+    name = _require_member(request)
+    result = field_duty.set_participation(username.strip(), False)
+    _log(name, '删除外勤登记', username.strip(), role='member')
+    return result
+
+
 @app.post("/api/member/field-duty")
 async def member_field_duty_register(request: Request):
     name = _require_member(request)
-    return field_duty.register(name)
+    result = field_duty.register(name)
+    _log(name, '登记外勤', result.get('label', ''), role='member')
+    return result
 
 
 @app.put("/api/admin/overview/attendance")
@@ -998,7 +1123,10 @@ async def admin_set_attendance(request: Request):
     try:
         shift_id = int(body.get("shift_id"))
         name = str(body.get("name") or "").strip()
-        return overview.set_member_status(shift_id, name, str(body.get("status") or ""))
+        result = overview.set_member_status(shift_id, name, str(body.get("status") or ""))
+        _log(_admin_username(request), '更改考勤状态',
+             f"{name} 班次 #{shift_id} → {result['status']}")
+        return result
     except (TypeError, ValueError) as exc:
         raise _schedule_error(exc) from exc
     except LookupError as exc:
@@ -1010,11 +1138,56 @@ async def admin_set_field_duty(request: Request):
     _require_permission(request, "field")
     body = await request.json()
     try:
-        return field_duty.set_participation(
+        result = field_duty.set_participation(
             str(body.get("username") or "").strip(), bool(body.get("registered")),
             str(body.get("month") or "") or None)
+        _log(_admin_username(request), '更改外勤状态',
+             f"{result['username']} {result['month']} → {'已参加' if result['registered'] else '未参加'}")
+        return result
     except (TypeError, ValueError) as exc:
         raise _schedule_error(exc) from exc
+
+
+@app.get("/api/admin/swaps")
+async def admin_swaps(request: Request):
+    _require_permission(request, "schedule")
+    return {"items": swap_store.list_swaps()}
+
+
+@app.get("/api/admin/swaps/candidates")
+async def admin_swap_candidates(request: Request, username: str = "", shift_id: int = 0):
+    _require_permission(request, "schedule")
+    name = username.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="请先选择人员")
+    return {"items": swap_store.candidates(name, shift_id or None)}
+
+
+@app.post("/api/admin/swaps")
+async def admin_swap_create(request: Request):
+    _require_permission(request, "schedule")
+    body = await request.json()
+    try:
+        swap_id = swap_store.create(
+            int(body.get("shift_a")), str(body.get("name_a") or "").strip(),
+            int(body.get("shift_b")), str(body.get("name_b") or "").strip(),
+            confirmed=body.get("confirmed") is True)
+        _log(_admin_username(request), '新增调班',
+             f"{body.get('name_a')} 与 {body.get('name_b')} 互换班次")
+    except (TypeError, ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    return {"id": swap_id}
+
+
+@app.delete("/api/admin/swaps/{swap_id}")
+async def admin_swap_delete(swap_id: int, request: Request):
+    _require_permission(request, "schedule")
+    try:
+        swap_store.delete(swap_id)
+        _log(_admin_username(request), '删除调班', f'#{swap_id}')
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    return {"ok": True}
 
 
 @app.get("/api/admin/field-duty")
@@ -1039,6 +1212,7 @@ async def member_password(request: Request):
     body = await request.json()
     try:
         member_store.change_password(name, str(body.get("old_password") or ""), str(body.get("new_password") or ""))
+        _log(name, '修改个人密码', role='member')
     except ValueError as exc:
         raise _schedule_error(exc) from exc
     request.session["member_version"] = member_store.session_version(name)
@@ -1070,6 +1244,7 @@ async def admin_member_permissions(request: Request):
         raise HTTPException(status_code=403, detail="当前账号没有更改权限的资格")
     try:
         perms = permissions.set_permissions(name, body.get("permissions") or [])
+        _log(_admin_username(request), '更改权限', f"{name} → {'、'.join(sorted(perms)) or '无权限'}")
     except LookupError as exc:
         raise _schedule_error(exc) from exc
     return {"ok": True, "username": name, "permissions": sorted(perms)}
@@ -1087,6 +1262,7 @@ async def admin_member_password(request: Request):
         raise HTTPException(status_code=403, detail="仅账号本人或拥有“更改权限”者可以更改密码")
     try:
         member_store.set_password(name, str(body.get("password") or ""))
+        _log(_admin_username(request), '更改账号密码', name)
     except (ValueError, LookupError) as exc:
         raise _schedule_error(exc) from exc
     return {"ok": True}
@@ -1095,7 +1271,10 @@ async def admin_member_password(request: Request):
 @app.post("/api/admin/members/provision")
 async def admin_provision_members(request: Request):
     _require_permission(request, "accounts")
-    return member_store.provision()
+    result = member_store.provision()
+    _log(_admin_username(request), '补齐排班人员账号',
+         f"新建 {result['created']} 个，已存在 {result['existing']} 个")
+    return result
 
 
 @app.post("/api/admin/members")
@@ -1103,7 +1282,9 @@ async def admin_add_member(request: Request):
     _require_permission(request, "accounts_manage")
     body = await request.json()
     try:
-        return member_store.create(body.get("username"))
+        result = member_store.create(body.get("username"))
+        _log(_admin_username(request), '添加账号', str(body.get("username") or ""))
+        return result
     except ValueError as exc:
         raise _schedule_error(exc) from exc
 
@@ -1121,6 +1302,7 @@ async def admin_delete_member(request: Request, username: str = ""):
         raise HTTPException(status_code=403, detail="该账号拥有权限，需具备更改权限的资格才能删除")
     try:
         member_store.delete(name)
+        _log(_admin_username(request), '删除账号', name)
     except (ValueError, LookupError) as exc:
         raise _schedule_error(exc) from exc
     return {"ok": True}
@@ -1137,7 +1319,14 @@ async def admin_update_member(request: Request):
     if not _may_manage(target, actor):
         raise HTTPException(status_code=403, detail="该账号拥有权限，需具备更改权限的资格才能操作")
     try:
-        member_store.update(str(body.get("username") or ""), body.get("active"), body.get("reset_password") is True)
+        target = str(body.get("username") or "")
+        member_store.update(target, body.get("active"), body.get("reset_password") is True)
+        changes = []
+        if "active" in body:
+            changes.append('启用' if body.get("active") else '停用')
+        if body.get("reset_password") is True:
+            changes.append('重置密码')
+        _log(_admin_username(request), '修改账号', f"{target}：{'、'.join(changes) or '无变化'}")
     except ValueError as exc:
         raise _schedule_error(exc) from exc
     return {"ok": True}

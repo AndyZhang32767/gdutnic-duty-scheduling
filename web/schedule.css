@@ -49,13 +49,13 @@ h2{font-size:16px;font-weight:600;margin:0}
 .member.late,.member.checked.late{background:#fff3c4;color:#8a6000}
 .member.absent,.member.checked.absent{background:#ffdcdc;color:#a41212}
 .member.pending{background:var(--md-surface-low);color:var(--md-on-surface-variant)}
-.check-form{display:flex;gap:9.6px;margin-top:16px}
+.check-form{display:flex;align-items:center;gap:9.6px;margin-top:16px}
 .check-form select{flex:1;min-width:0}
 .empty{text-align:center;padding:51.2px 19.2px;background:var(--md-surface-low);border-radius:var(--md-radius-xl)}
 .empty h2{margin-bottom:8px}
 label{display:block;font-size:11.2px;color:var(--md-secondary)}
 input,textarea,select{font:inherit;border:0;border-radius:var(--md-radius-lg);padding:11.2px 12.8px;background:var(--md-surface-low);color:var(--md-on-surface);max-width:100%;outline:1.6px solid transparent;transition:outline-color 150ms ease}
-form label:not(.outlined-field) input:not([type=checkbox]),form label textarea{display:block;width:100%;margin:6.4px 0 14.4px}
+form label:not(.outlined-field) input:not([type=checkbox]):not([type=radio]),form label textarea{display:block;width:100%;margin:6.4px 0 14.4px}
 input:focus,textarea:focus,select:focus{outline-color:var(--md-primary)}
 button:disabled{opacity:.5;cursor:default}
 button:focus-visible,a:focus-visible{outline:1.6px solid var(--md-primary);outline-offset:2.4px}
@@ -66,11 +66,10 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 #status,#formStatus,#authStatus{color:var(--md-error);min-height:19.2px}
 .actions{display:flex;gap:6.4px;margin-top:14.4px}
 [hidden]{display:none!important}
-@media(max-width:900px){.ga-app{grid-template-columns:216px 1fr}.hero{align-items:stretch;flex-direction:column}.member-hero{flex-direction:row;align-items:center}.stats>div{padding:14.4px 11.2px}.stats strong{display:block}.date-box{padding:12.8px}}
+@media(max-width:900px){.ga-app{grid-template-columns:162px 1fr}.hero{align-items:stretch;flex-direction:column}.member-hero{flex-direction:row;align-items:center}.stats>div{padding:14.4px 11.2px}.stats strong{display:block}.date-box{padding:12.8px}}
 @media(max-width:650px){.ga-app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.ga-nav{padding:9.6px 12.8px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:6.4px}.ga-brand{margin:0}.ga-brand h1{font-size:14.4px}.ga-brand img{width:28.8px;height:28.8px}.ga-nav nav{flex-direction:row}.ga-nav .panel-footer{grid-column:1/-1;padding:0}.ga-nav-item{width:auto;padding:6.4px 11.2px}.ga-main{padding:12.8px}.hero{gap:9.6px;margin-bottom:16px}.hero h1{font-size:20.8px}.hero p{margin:3.2px 0}.stats{gap:6.4px;margin-bottom:19.2px}.stats>div{padding:12.8px 9.6px}.stats strong{font-size:19.2px}.stats span{font-size:9.6px}.card{padding:16px}.shift-top{flex-wrap:wrap}.check-form{flex-direction:column}.time{font-size:16.8px}.admin-board{padding:22.4px 19.2px;grid-template-columns:1fr;gap:22.4px}.admin-board-right{min-height:0}}
-.weekly-notice{background:var(--md-secondary-container);padding:12.8px 16px;border-radius:var(--md-radius-lg);color:var(--md-secondary)}
 .weekly-config{margin-bottom:16px}.weekly-times{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12.8px;margin-top:12.8px}.weekly-slot{border:0.8px solid var(--md-outline);border-radius:var(--md-radius-lg);padding:11.2px;min-width:0}.weekly-slot legend{color:var(--md-primary);padding:0 4.8px;font-size:11.2px}.weekly-slot input{width:100%;min-width:0}.weekly-table-wrap{overflow:auto;background:var(--md-surface-high);border-radius:var(--md-radius-xl);box-shadow:var(--md-shadow)}.weekly-table-tools{display:flex;align-items:center;justify-content:space-between;gap:12.8px;padding:12.8px 16px;border-bottom:0.8px solid var(--md-surface-low);color:var(--md-on-surface-variant);font-size:11.2px;line-height:1.6}.weekly-table-tools .actions{margin-top:0;flex-wrap:wrap}@media(max-width:650px){.weekly-table-tools{flex-direction:column;align-items:flex-start}}
-.weekly-table{width:100%;min-width:800px;border-collapse:separate;border-spacing:0;text-align:left}.weekly-table caption{text-align:left;padding:16px;color:var(--md-secondary);font-size:11.2px}.weekly-table th{padding:12.8px;background:var(--md-secondary-container);color:var(--md-on-primary-container);font-weight:600;white-space:nowrap}.weekly-table td{padding:6.4px;border-bottom:0.8px solid var(--md-surface-low)}.weekly-table textarea{width:100%;min-width:88px;resize:vertical;padding:9.6px;font-size:11.2px;line-height:1.7}.review-check{display:flex;align-items:center;gap:8px;margin-top:16px}.review-check input{flex:0 0 16px;width:16px;height:16px;margin:0;padding:0;accent-color:var(--md-primary)}.publish-card{margin-top:22.4px}.publish-form{display:flex;align-items:center;gap:12.8px;flex-wrap:wrap}.publish-form label{flex:1;min-width:160px}#weeklyStatus{min-height:19.2px;color:var(--md-primary);line-height:1.7}@media(max-width:1100px){.weekly-times{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.ga-nav nav{flex-wrap:wrap}.weekly-times{gap:8px}.weekly-slot{padding:8px}}
+.weekly-table{width:100%;min-width:800px;border-collapse:separate;border-spacing:0;text-align:left}.weekly-table caption{text-align:left;padding:16px;color:var(--md-secondary);font-size:11.2px}.weekly-table th{padding:12.8px;background:var(--md-secondary-container);color:var(--md-on-primary-container);font-weight:600;white-space:nowrap}.weekly-table td{padding:6.4px;border-bottom:0.8px solid var(--md-surface-low)}.weekly-table textarea{width:100%;min-width:88px;resize:vertical;padding:9.6px;font-size:11.2px;line-height:1.7}.review-check{display:flex;align-items:center;gap:8px;margin-top:16px}.review-check input{flex:0 0 16px;width:16px;height:16px;margin:0;padding:0;accent-color:var(--md-primary)}.publish-card{margin-top:22.4px}.publish-range{display:flex;align-items:flex-end;gap:12.8px;flex-wrap:wrap;margin:12.8px 0}.publish-range label{flex:1;min-width:180px}.publish-arrow{font-size:16px;color:var(--md-secondary);padding-bottom:12px}.publish-form{display:flex;align-items:center;gap:12.8px;flex-wrap:wrap}.publish-form label{flex:1;min-width:160px}#weeklyStatus{min-height:19.2px;color:var(--md-primary);line-height:1.7}@media(max-width:1100px){.weekly-times{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.ga-nav nav{flex-wrap:wrap}.weekly-times{gap:8px}.weekly-slot{padding:8px}}
 
 .rules-card{max-width:640px}.rules-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12.8px;margin:12.8px 0}#rulesStatus,#specialStatus,#memberFormStatus{color:var(--md-primary);min-height:19.2px;line-height:1.7}@media(max-width:650px){.rules-grid{grid-template-columns:1fr}}
 .ga-main,.ga-main-body{min-width:0}
@@ -214,9 +213,11 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 .animated-button:hover svg { fill: #1f387e; }
 .animated-button:active {
   scale: 0.95;
-  box-shadow: 0 0 0 4px greenyellow;
+  box-shadow: 0 0 0 4px #f5c518;
 }
-.animated-button:hover .circle { width: 220px; height: 220px; opacity: 1; }
+/* State 0 (点击登记): hovering previews the pending yellow. */
+.animated-button:hover .circle { width: 220px; height: 220px; opacity: 1; background-color: #ffe9a8; }
+.animated-button:hover { color: #7a5b00; }
 /* Locked success state:浅绿配色，文字居中，不再响应悬停动画。 */
 .animated-button.registered,
 .animated-button.registered:hover,
@@ -228,20 +229,60 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
   cursor: default;
   scale: 1;
 }
+/* State 2 (登记完成): frozen in the pressed look; hover keeps the light green surface. */
+.animated-button.registered:hover .circle,
+.animated-button.registered .circle { width: 20px; height: 20px; opacity: 0; background-color: #c8efc8; }
+.animated-button.registered:hover { background-color: #c8efc8; color: #1f5b25; border-radius: 12px; }
+.animated-button.registered:hover svg,
 .animated-button.registered svg { display: none; }
-.animated-button.registered .circle { opacity: 0; width: 20px; height: 20px; }
-.animated-button.registered .text,
-.animated-button.registered:hover .text { transform: none; }
+.animated-button.registered:hover .text,
+.animated-button.registered .text { transform: none; }
 .animated-button.registered:disabled { opacity: 1; }
+
+/* Check-in variant: fits inside a shift card, and looks inert while the window is closed. */
+.animated-button.check-in-button{padding:10.4px 28.8px;font-size:13.6px;background:var(--md-surface-high)}
+.animated-button.check-in-button .text{transform:translateX(-8px)}
+.animated-button.check-in-button:hover .text{transform:translateX(8px)}
+.animated-button.check-in-button:disabled,
+.animated-button.check-in-button.is-locked{
+  background:var(--md-surface-low);color:var(--md-secondary);box-shadow:none;
+  border-radius:12px;cursor:not-allowed;scale:1;opacity:.75}
+.animated-button.check-in-button:disabled svg,
+.animated-button.check-in-button.is-locked svg{display:none}
+.animated-button.check-in-button:disabled .circle,
+.animated-button.check-in-button.is-locked .circle{opacity:0;width:20px;height:20px}
+.animated-button.check-in-button:disabled .text,
+.animated-button.check-in-button.is-locked .text{transform:none}
+.animated-button.check-in-button.registered{background:#c8efc8;color:#1f5b25;box-shadow:0 0 0 4px #a7dfa7;
+  opacity:1;cursor:default}
+/* The compact variant's hover shift must not win over the frozen registered look. */
+.animated-button.check-in-button.registered:hover .text{transform:none}
+.animated-button.check-in-button.registered:hover .circle{opacity:0;width:20px;height:20px}
 
 /* Inline editor opened from an overview member row or a field-duty card. */
 .detail-member.clickable,.field-person.clickable{cursor:pointer}
 .detail-member.clickable:hover{outline:1.6px solid var(--md-primary)}
 .field-person.clickable:hover{outline:1.6px solid var(--md-primary)}
 .status-options{display:flex;flex-wrap:wrap;gap:8px;margin:9.6px 0 12.8px}
-.status-option{display:flex;align-items:center;gap:6.4px;padding:9.6px 12.8px;border-radius:var(--md-radius-lg);
-  background:var(--md-surface-low);cursor:pointer;font-size:11.2px}
-.status-option input{width:16px;height:16px;margin:0;accent-color:var(--md-primary)}
+/* Radio options must not inherit the full-width text-input styling. */
+.status-option{display:inline-flex;align-items:center;gap:8px;padding:8px 14.4px;
+  border-radius:999px;background:var(--md-surface-low);cursor:pointer;font-size:11.2px;
+  color:var(--md-on-surface);line-height:1.4;white-space:nowrap}
+.status-option span{display:inline;margin:0;white-space:nowrap}
+/* Some browsers keep the block value from the generic rule above inside <dialog><form>;
+   !important keeps these radio dots laid out inline with their labels. */
+form label.status-option input[type=radio],
+form .status-options .status-option input[type=radio]{display:inline-block!important;flex:0 0 16px;
+  width:16px!important;height:16px!important;min-width:16px;margin:0!important;padding:0!important;border:0;
+  appearance:none;-webkit-appearance:none;
+  border-radius:50%;background:var(--md-surface-high);outline:1.6px solid var(--md-outline);
+  outline-offset:-1.6px;cursor:pointer;transition:background-color 120ms ease,outline-color 120ms ease}
+form label.status-option input[type=radio]:checked,
+form .status-options .status-option input[type=radio]:checked{background:var(--md-primary);outline-color:var(--md-primary);
+  box-shadow:inset 0 0 0 3.2px var(--md-surface-high)}
+form label.status-option input[type=radio]:focus-visible,
+form .status-options .status-option input[type=radio]:focus-visible{outline:1.6px solid var(--md-primary);outline-offset:2.4px}
+.status-option:has(input:checked){background:var(--md-primary-container);color:var(--md-on-primary-container)}
 .field-person .manual-flag{font-size:11.2px;opacity:.8}
 
 /* Stat tiles size to their content instead of stretching across the page. */
@@ -274,3 +315,100 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 .week-cell:not(:has(.week-card)) { background: transparent; padding: 0; }
 .week-cell:has(.week-card) { display: flex; }
 .week-card { align-self: stretch; }
+
+/* Duty swap cards and the two-sided picker dialog. */
+.swap-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12.8px}
+.swap-side{display:flex;flex-direction:column;gap:3.2px;padding:12.8px 16px;border-radius:var(--md-radius-lg);background:var(--md-surface-low);min-width:0}
+.swap-role{font-size:11.2px;color:var(--md-secondary)}
+.swap-side strong{font-size:14.4px;font-weight:600;color:var(--md-primary)}
+.swap-when{font-size:11.2px;color:var(--md-on-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swap-note{font-size:11.2px;color:var(--md-on-surface-variant)}
+.swap-picker{display:grid;grid-template-columns:1fr 1.4fr;gap:12.8px;margin-bottom:12.8px}
+.swap-picker select{width:100%;min-width:0}
+#swapDialog{width:min(560px, calc(100% - 25.6px))}
+#swapFormStatus{color:var(--md-error);min-height:19.2px}
+@media(max-width:900px){.swap-pair,.swap-picker{grid-template-columns:1fr}}
+
+/* Field duty button: pending state is yellow; confirmed stays green and locked. */
+.animated-button.pending,
+.animated-button.pending:hover,
+.animated-button.pending:active {
+  background-color: #ffe9a8;
+  color: #7a5b00;
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px #f0d68a;
+  cursor: default;
+  scale: 1;
+}
+/* State 1 (等待确认): frozen in the pressed look; hover changes nothing. */
+.animated-button.pending .circle,
+.animated-button.pending:hover .circle { width: 20px; height: 20px; opacity: 0; background-color: #f5c518; }
+.animated-button.pending svg,
+.animated-button.pending:hover svg { display: none; }
+.animated-button.pending .text,
+.animated-button.pending:hover .text { transform: none; }
+.animated-button.pending:disabled { opacity: 1; }
+
+/* 外勤确认 page */
+.badge.confirmed{background:#c8efc8;color:#1f5b25}
+.btn.confirmed,.btn.confirmed:disabled{background:#c8efc8;color:#1f5b25;opacity:1}
+
+#fieldConfirmStatus{min-height:19.2px;color:var(--md-primary);line-height:1.7}
+
+/* 外勤确认 card: confirm button on the left, delete pushed to the right. */
+.field-pending-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12.8px}
+.field-pending-actions .animated-button{padding:10.4px 28.8px;font-size:13.6px}
+.field-pending-actions .animated-button .text{transform:translateX(-8px)}
+.field-pending-actions .animated-button:hover .text{transform:translateX(8px)}
+.field-pending-actions .btn.danger{margin-left:auto}
+
+/* 系统时间 card */
+.clock-manual{display:flex;gap:12.8px;margin:9.6px 0 0}
+.clock-manual label{flex:0 0 auto;min-width:96px}
+.clock-manual input{width:96px}
+.clock-now{margin-top:12.8px;padding-top:12.8px;border-top:0.8px solid var(--md-surface-low);
+  font-size:12.8px;color:var(--md-on-surface)}
+.clock-now strong{font-variant-numeric:tabular-nums;font-size:16px;color:var(--md-primary)}
+#clockStatus{min-height:19.2px;color:var(--md-primary);line-height:1.7}
+
+/* 异常统计：两周/四周切换与左右两栏横向柱状图 */
+.anomaly-head{margin-top:22.4px;align-items:center}
+.segmented{display:inline-flex;background:var(--md-surface-low);border-radius:999px;padding:3.2px;gap:2px}
+.segment{border:0;background:transparent;color:var(--md-secondary);font:inherit;font-size:11.2px;
+  font-weight:600;padding:5.6px 14.4px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.segment.active{background:var(--md-primary);color:var(--md-on-primary)}
+.segment:focus-visible{outline:1.6px solid var(--md-primary);outline-offset:2px}
+#anomalyRange{min-height:19.2px}
+.anomaly-board{display:grid;grid-template-columns:1fr 1fr;gap:12.8px;margin-bottom:22.4px}
+.anomaly-card{min-width:0}
+.anomaly-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12.8px}
+.anomaly-title h3{margin:0;font-size:13.6px;font-weight:600;color:var(--md-on-surface)}
+.anomaly-total{font-size:11.2px;color:var(--md-secondary)}
+.anomaly-chart{display:flex;flex-direction:column;gap:8px}
+.anomaly-row{display:grid;grid-template-columns:minmax(56px,96px) 1fr auto;align-items:center;gap:9.6px}
+.anomaly-name{font-size:11.2px;color:var(--md-on-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.anomaly-track{height:16px;border-radius:4.8px;background:var(--md-surface-low);overflow:hidden}
+.anomaly-fill{height:100%;border-radius:4.8px;min-width:4px;transition:width 300ms ease}
+/* 迟到：黄色；旷班：浅红色。圆角方形，无描边。 */
+#lateChart .anomaly-fill{background:#f5c518}
+#absentChart .anomaly-fill{background:#ffdcdc}
+.anomaly-count{font-size:11.2px;font-variant-numeric:tabular-nums;color:var(--md-on-surface-variant);min-width:1.6em;text-align:right}
+.anomaly-empty{color:var(--md-on-surface-variant);font-size:11.2px;padding:8px 0}
+@media(max-width:900px){.anomaly-board{grid-template-columns:1fr}}
+
+/* 查看日志 */
+.log-toolbar{display:flex;align-items:center;gap:9.6px;flex-wrap:wrap;margin:9.6px 0}
+.log-toolbar .member-search{flex:1;min-width:180px}
+.log-toolbar .member-search input{width:100%}
+.log-actor select{min-width:150px}
+.log-table-wrap{background:var(--md-surface-high);border-radius:var(--md-radius-xl);box-shadow:var(--md-shadow);overflow:auto}
+.log-table{width:100%;border-collapse:separate;border-spacing:0;text-align:left;font-size:11.2px}
+.log-table th{padding:11.2px 16px;background:var(--md-secondary-container);color:var(--md-on-primary-container);
+  font-weight:600;white-space:nowrap;position:sticky;top:0}
+.log-table td{padding:9.6px 16px;border-bottom:0.8px solid var(--md-surface-low);vertical-align:top}
+.log-table tr:last-child td{border-bottom:0}
+.log-time{color:var(--md-on-surface-variant);white-space:nowrap;font-variant-numeric:tabular-nums}
+.log-actor-cell{font-weight:600;color:var(--md-primary);white-space:nowrap}
+.log-detail{color:var(--md-on-surface);line-height:1.6}
+.log-empty{text-align:center;color:var(--md-on-surface-variant);padding:25.6px 16px!important}
+#logsStatus{min-height:19.2px;color:var(--md-primary);line-height:1.7}

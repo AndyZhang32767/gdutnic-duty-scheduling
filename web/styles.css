@@ -663,6 +663,21 @@ textarea { resize: vertical; min-height: 44.8px; }
   to { transform: scale(1); opacity: 0; }
 }
 
+.ripple-ink {
+  position: absolute;
+  z-index: 2;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: scale(0);
+  animation: ripple-ink 320ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+@keyframes ripple-ink {
+  to { transform: scale(1); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ripple-ink { animation-duration: 1ms; }
+}
+
 .status {
   margin-top: 9.6px;
   padding: 8px 11.2px;
@@ -1458,7 +1473,8 @@ textarea { resize: vertical; min-height: 44.8px; }
 }
 .ga-app {
   display: grid;
-  grid-template-columns: 324px 1fr;
+  /* Sidebar at 75% of the previous 324px width. */
+  grid-template-columns: 243px 1fr;
   height: 100vh;
   height: 100dvh;
   background: var(--md-surface);
@@ -1558,7 +1574,7 @@ textarea { resize: vertical; min-height: 44.8px; }
 }
 .chats-board {
   display: grid;
-  grid-template-columns: minmax(192px, 256px) 1fr;
+  grid-template-columns: minmax(144px, 192px) 1fr;
   gap: 12.8px;
   min-height: 0;
   height: calc(100dvh - 128px);

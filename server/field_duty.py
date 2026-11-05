@@ -1,9 +1,14 @@
 """Monthly field-duty (外勤) registrations, one record per member per month."""
 from datetime import datetime
 
-from server import db, schedule_store
+from server import db, schedule_store, system_clock
 
 TABLE = 'field_duty'
+
+
+# 0 = 未登记, 1 = 已登记待确认, 2 = 已确认。只有 2 计入后台统计。
+NONE, PENDING, CONFIRMED = 0, 1, 2
+STATUS_TEXT = {NONE: '未登记', PENDING: '等待确认', CONFIRMED: '已确认'}
 
 
 def init(conn):
@@ -12,26 +17,32 @@ def init(conn):
             "CREATE TABLE IF NOT EXISTS field_duty ("
             " month CHAR(7) NOT NULL, username VARCHAR(64) NOT NULL,"
             " registered_at VARCHAR(40) NOT NULL, manual TINYINT NOT NULL DEFAULT 0,"
+            " status TINYINT NOT NULL DEFAULT 2,"
             " PRIMARY KEY(month, username)"
             ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
     else:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS field_duty ("
             " month TEXT NOT NULL, username TEXT NOT NULL, registered_at TEXT NOT NULL,"
-            " manual INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(month, username))")
+            " manual INTEGER NOT NULL DEFAULT 0, status INTEGER NOT NULL DEFAULT 2,"
+            " PRIMARY KEY(month, username))")
     db.upgrade_table(TABLE)
 
 
+def _status(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return NONE
+
+
 def _month(now=None):
-    return (now or datetime.now(schedule_store.TZ)).strftime('%Y-%m')
+    return (now or system_clock.now()).strftime('%Y-%m')
 
 
 def registered(username, month=None):
-    with db.read() as conn:
-        init(conn)
-        return conn.execute(
-            'SELECT registered_at FROM field_duty WHERE month=? AND username=?',
-            (month or _month(), username)).fetchone() is not None
+    """True once the person has registered (pending or confirmed)."""
+    return member_status(username, month)['status'] != NONE
 
 
 def member_status(username, month=None):
@@ -39,24 +50,59 @@ def member_status(username, month=None):
     with db.read() as conn:
         init(conn)
         row = conn.execute(
-            'SELECT registered_at FROM field_duty WHERE month=? AND username=?', (month, username)).fetchone()
-        return {'month': month, 'registered': row is not None,
-                'registered_at': row['registered_at'] if row else None}
+            'SELECT registered_at, status FROM field_duty WHERE month=? AND username=?',
+            (month, username)).fetchone()
+    status = _status(row['status']) if row else NONE
+    return {'month': month, 'status': status, 'label': STATUS_TEXT.get(status, '未登记'),
+            'registered': status != NONE,
+            'registered_at': row['registered_at'] if row else None}
 
 
 def register(username, month=None):
-    """Idempotent: registering twice in the same month keeps the original time."""
+    """Member self-registration: 0 → 1 only; never confirms and never repeats."""
     month = month or _month()
     with db.write() as conn:
         init(conn)
         row = conn.execute(
-            'SELECT registered_at FROM field_duty WHERE month=? AND username=?', (month, username)).fetchone()
+            'SELECT registered_at, status FROM field_duty WHERE month=? AND username=?',
+            (month, username)).fetchone()
+        if row and _status(row['status']) != NONE:
+            return {**member_status(username, month), 'created': False}
+        stamp = system_clock.now().isoformat(timespec='seconds')
         if row:
-            return {'month': month, 'registered': True, 'registered_at': row['registered_at'], 'created': False}
-        stamp = datetime.now(schedule_store.TZ).isoformat(timespec='seconds')
-        conn.execute('INSERT INTO field_duty(month, username, registered_at) VALUES(?,?,?)',
-                     (month, username, stamp))
-        return {'month': month, 'registered': True, 'registered_at': stamp, 'created': True}
+            conn.execute('UPDATE field_duty SET registered_at=?, status=? WHERE month=? AND username=?',
+                         (stamp, PENDING, month, username))
+        else:
+            conn.execute('INSERT INTO field_duty(month, username, registered_at, status)'
+                         ' VALUES(?,?,?,?)', (month, username, stamp, PENDING))
+    return {**member_status(username, month), 'created': True}
+
+
+def confirm(username, month=None):
+    """Confirm a pending registration: 1 → 2. Already-confirmed stays confirmed."""
+    month = month or _month()
+    with db.write() as conn:
+        init(conn)
+        row = conn.execute('SELECT status FROM field_duty WHERE month=? AND username=?',
+                           (month, username)).fetchone()
+        if not row or _status(row['status']) == NONE:
+            raise LookupError('该人员本月没有待确认的外勤登记')
+        if _status(row['status']) != CONFIRMED:
+            conn.execute('UPDATE field_duty SET status=? WHERE month=? AND username=?',
+                         (CONFIRMED, month, username))
+    return member_status(username, month)
+
+
+def pending(month=None):
+    """Registrations waiting for confirmation (status 1), oldest first."""
+    month = month or _month()
+    with db.read() as conn:
+        init(conn)
+        rows = conn.execute(
+            'SELECT username, registered_at FROM field_duty WHERE month=? AND status=?'
+            ' ORDER BY registered_at, username', (month, PENDING)).fetchall()
+    return {'month': month,
+            'items': [{'username': r['username'], 'registered_at': r['registered_at']} for r in rows]}
 
 
 def overview(month=None):
@@ -65,8 +111,11 @@ def overview(month=None):
     with db.read() as conn:
         init(conn)
         rows = conn.execute(
-            'SELECT username, registered_at, manual FROM field_duty WHERE month=?', (month,)).fetchall()
-        done = {row['username']: (row['registered_at'], bool(row['manual'])) for row in rows}
+            'SELECT username, registered_at, manual, status FROM field_duty WHERE month=?',
+            (month,)).fetchall()
+        # Only confirmed records (status 2) count towards the monthly board.
+        done = {row['username']: (row['registered_at'], bool(row['manual']))
+                for row in rows if _status(row['status']) == CONFIRMED}
         accounts = [r['username'] for r in conn.execute(
             'SELECT username FROM member_accounts WHERE active=1 ORDER BY username')]
     items = [{'username': name, 'registered': name in done,
@@ -85,15 +134,15 @@ def set_participation(username, registered, month=None):
         row = conn.execute('SELECT registered_at FROM field_duty WHERE month=? AND username=?',
                            (month, username)).fetchone()
         if registered:
+            # An administrator marking presence counts as confirmed (status 2).
             if row:
-                # Keep the original timestamp; only flag the entry as manual.
-                conn.execute('UPDATE field_duty SET manual=1 WHERE month=? AND username=?',
-                             (month, username))
+                conn.execute('UPDATE field_duty SET manual=1, status=? WHERE month=? AND username=?',
+                             (CONFIRMED, month, username))
                 return {'month': month, 'username': username, 'registered': True,
                         'registered_at': row['registered_at'], 'manual': True}
-            stamp = datetime.now(schedule_store.TZ).isoformat(timespec='seconds')
-            conn.execute('INSERT INTO field_duty(month, username, registered_at, manual)'
-                         ' VALUES(?,?,?,1)', (month, username, stamp))
+            stamp = system_clock.now().isoformat(timespec='seconds')
+            conn.execute('INSERT INTO field_duty(month, username, registered_at, manual, status)'
+                         ' VALUES(?,?,?,1,?)', (month, username, stamp, CONFIRMED))
             return {'month': month, 'username': username, 'registered': True,
                     'registered_at': stamp, 'manual': True}
         conn.execute('DELETE FROM field_duty WHERE month=? AND username=?', (month, username))

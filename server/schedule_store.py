@@ -1,7 +1,7 @@
 """Persistent duty schedules and atomic, repeat-safe attendance."""
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from server import db
+from server import db, system_clock
 
 TZ = ZoneInfo('Asia/Shanghai')
 
@@ -62,7 +62,7 @@ def _attach_status(items, name=None):
         return
     from server import duty_settings
     rules = duty_settings.load()
-    now = datetime.now(TZ)
+    now = system_clock.now()
     for item in items:
         start, end = shift_bounds(item)
         late_at = start + timedelta(minutes=rules['late_minutes'])
@@ -178,10 +178,53 @@ def _members(conn, shift_id, name=None):
     return [dict(r) for r in conn.execute(sql + ' ORDER BY name', args)]
 
 
+def _init_history(conn):
+    if isinstance(conn, db.MysqlConnection):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS attendance_history ("
+            " id BIGINT PRIMARY KEY AUTO_INCREMENT, day CHAR(10) NOT NULL,"
+            " start CHAR(5) NOT NULL, end CHAR(5) NOT NULL,"
+            " name VARCHAR(64) NOT NULL, checked_at VARCHAR(40) NOT NULL,"
+            " location VARCHAR(120) NOT NULL DEFAULT '', note TEXT NOT NULL,"
+            " archived_at VARCHAR(40) NOT NULL"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+    else:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS attendance_history ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL,"
+            " start TEXT NOT NULL, end TEXT NOT NULL, name TEXT NOT NULL,"
+            " checked_at TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',"
+            " note TEXT NOT NULL, archived_at TEXT NOT NULL)")
+
+
 def clear_all():
+    """Delete every schedule, archiving real check-ins so attendance history survives."""
     with db.write() as conn:
+        init(conn)
+        _init_history(conn)
+        stamp = system_clock.now().isoformat(timespec='seconds')
+        checked = conn.execute(
+            'SELECT s.day,s.start,s.end,s.location,s.note,a.name,a.checked_at'
+            ' FROM shifts s JOIN attendance a ON a.shift_id=s.id'
+            ' WHERE a.checked_at IS NOT NULL').fetchall()
+        if checked:
+            conn.executemany(
+                'INSERT INTO attendance_history'
+                '(day,start,end,name,checked_at,location,note,archived_at) VALUES(?,?,?,?,?,?,?,?)',
+                [(r['day'], r['start'], r['end'], r['name'], r['checked_at'], r['location'],
+                  r['note'] or '', stamp) for r in checked])
         deleted = conn.execute('DELETE FROM shifts').rowcount
-    return {'deleted': deleted}
+    return {'deleted': deleted, 'archived': len(checked)}
+
+
+def history():
+    """Archived check-ins kept after 清除所有排班."""
+    with db.read() as conn:
+        init(conn)
+        _init_history(conn)
+        return [dict(r) for r in conn.execute(
+            'SELECT day,start,end,name,checked_at,location,note FROM attendance_history'
+            ' ORDER BY day DESC, start DESC, name').fetchall()]
 
 
 def check_in(shift_id, name):
@@ -198,7 +241,7 @@ def check_in_with_chain(shift_id, name, now=None):
     actually tapped keeps its own late/absent classification.
     """
     from server import duty_settings
-    now = now or datetime.now(TZ)
+    now = now or system_clock.now()
     with db.write() as conn:
         init(conn)
         row = conn.execute('''SELECT a.checked_at,s.day,s.start,s.end FROM attendance a

@@ -1,14 +1,19 @@
 // Member-side field duty (外勤) registration for the current month.
-function showMemberPage(field) {
-  $('dutyPage').hidden = field;
-  $('fieldPage').hidden = !field;
-  $('dutyTab').classList.toggle('active', !field);
-  $('fieldTab').classList.toggle('active', field);
+// `page` is 'duty', 'field' or 'confirm'.
+function showMemberPage(page) {
+  $('dutyPage').hidden = page !== 'duty';
+  $('fieldPage').hidden = page !== 'field';
+  const confirm = $('fieldConfirmPage');
+  if (confirm) confirm.hidden = page !== 'confirm';
+  $('dutyTab').classList.toggle('active', page === 'duty');
+  $('fieldTab').classList.toggle('active', page === 'field');
+  if ($('fieldConfirmTab')) $('fieldConfirmTab').classList.toggle('active', page === 'confirm');
 }
 
-// Three stages: idle "点击登记" → hover "确认登记" → after clicking "登记完成" (locked green).
+// Three states: 0 点击登记 (blue) → 1 等待确认 (yellow) → 2 登记完成 (green, locked).
 const FIELD_IDLE = '点击登记';
 const FIELD_HOVER = '确认登记';
+const FIELD_PENDING = '等待确认';
 const FIELD_DONE = '登记完成';
 
 function setFieldLabel(text) {
@@ -18,15 +23,18 @@ function setFieldLabel(text) {
 
 function paintFieldStatus(data) {
   const button = $('fieldButton');
-  const done = !!data.registered;
-  $('fieldCount').textContent = done ? '1' : '0';
-  button.classList.toggle('registered', done);
-  // A registered button stays green and never returns to the idle copy.
-  setFieldLabel(done ? FIELD_DONE : (button.matches(':hover') ? FIELD_HOVER : FIELD_IDLE));
-  button.disabled = done;
-  $('fieldStatus').textContent = done
-    ? `本月已于 ${new Date(data.registered_at).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'})} 登记外勤。`
-    : '';
+  const status = Number(data.status || 0);
+  $('fieldCount').textContent = status === 2 ? '1' : '0';
+  button.classList.toggle('registered', status === 2);
+  button.classList.toggle('pending', status === 1);
+  setFieldLabel(status === 2 ? FIELD_DONE : status === 1 ? FIELD_PENDING
+    : (button.matches(':hover') ? FIELD_HOVER : FIELD_IDLE));
+  // Registering is a one-way 0 → 1 step; the button stays disabled afterwards.
+  button.disabled = status !== 0;
+  const when = data.registered_at
+    ? new Date(data.registered_at).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}) : '';
+  $('fieldStatus').textContent = status === 2 ? `本月已于 ${when} 登记并确认外勤。`
+    : status === 1 ? `本月已于 ${when} 登记，等待确认。` : '';
 }
 
 async function loadFieldDuty() {
@@ -35,22 +43,18 @@ async function loadFieldDuty() {
   catch (err) { $('fieldStatus').textContent = err.message; }
 }
 
-$('fieldButton').addEventListener('mouseenter', () => {
-  if (!$('fieldButton').classList.contains('registered')) setFieldLabel(FIELD_HOVER);
-});
-$('fieldButton').addEventListener('mouseleave', () => {
-  if (!$('fieldButton').classList.contains('registered')) setFieldLabel(FIELD_IDLE);
-});
-// Pressing shows the confirm copy immediately; the success copy lands with the response.
-$('fieldButton').addEventListener('pointerdown', () => {
-  if (!$('fieldButton').classList.contains('registered')) setFieldLabel(FIELD_HOVER);
-});
+const fieldIdle = () => !$('fieldButton').classList.contains('registered')
+  && !$('fieldButton').classList.contains('pending');
+$('fieldButton').addEventListener('mouseenter', () => { if (fieldIdle()) setFieldLabel(FIELD_HOVER); });
+$('fieldButton').addEventListener('mouseleave', () => { if (fieldIdle()) setFieldLabel(FIELD_IDLE); });
+// Pressing shows the confirm copy immediately; the pending copy lands with the response.
+$('fieldButton').addEventListener('pointerdown', () => { if (fieldIdle()) setFieldLabel(FIELD_HOVER); });
 
-$('dutyTab').onclick = () => { showMemberPage(false); load(); };
-$('fieldTab').onclick = () => { showMemberPage(true); loadFieldDuty(); };
+$('dutyTab').onclick = () => { showMemberPage('duty'); load(); };
+$('fieldTab').onclick = () => { showMemberPage('field'); loadFieldDuty(); };
 $('fieldButton').onclick = async () => {
   const button = $('fieldButton');
-  if (button.classList.contains('registered')) return;
+  if (button.classList.contains('registered') || button.classList.contains('pending')) return;
   try {
     paintFieldStatus(await api('/api/member/field-duty', 'POST'));
   } catch (err) {

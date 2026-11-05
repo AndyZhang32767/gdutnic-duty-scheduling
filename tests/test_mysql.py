@@ -60,7 +60,9 @@ class MysqlIntegrationTest(unittest.TestCase):
             clock.now.return_value=datetime(2026,11,2,9,0,tzinfo=schedule_store.TZ)
             first=schedule_store.check_in(sid,'张三')
             self.assertEqual(schedule_store.check_in(sid,'张三'),first)
-        self.assertEqual(weekly_store.publish('2026-11-02'), dict(created=0,skipped=28))
+        # Only the two checked-in shifts survive regeneration; the rest are rebuilt.
+        self.assertEqual(weekly_store.publish('2026-11-02'), dict(created=26,skipped=2))
+        self.assertIn(sid, [s['id'] for s in schedule_store.list_day('2026-11-02')])
         schedule_store.delete(sid)
         with db.read() as c:
             self.assertEqual(c.execute('SELECT COUNT(*) AS n FROM attendance WHERE shift_id=?',(sid,)).fetchone()['n'],0)
@@ -71,7 +73,7 @@ class MysqlIntegrationTest(unittest.TestCase):
         with db.read() as c: self.assertIsNone(db.get_setting(c,'rollback-test'))
         chat_store.save_visitor_chats('test-visitor',[dict(id='chat',title='测试',updatedAt=1,messages=[dict(role='user',content='你好')])],'chat')
         self.assertEqual(chat_store.load_visitor_chats('test-visitor')['currentId'],'chat')
-        self.assertEqual(schedule_store.clear_all(), {'deleted': 27})
+        self.assertEqual(schedule_store.clear_all(), {'deleted': 27, 'archived': 1})
         with db.read() as c:
             for table in ('shifts', 'attendance', 'weekly_instances'):
                 self.assertEqual(c.execute(f'SELECT COUNT(*) AS n FROM {table}').fetchone()['n'], 0)

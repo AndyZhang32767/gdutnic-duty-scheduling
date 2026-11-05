@@ -1,7 +1,20 @@
 const admin = typeof document !== 'undefined' && document.body.dataset.admin === 'true';
 const $ = id => document.getElementById(id);
 const dayInput = () => $('day') || {value: today()};
-const today = () => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+// The system clock (which admins may pin) is authoritative; browser time is the fallback.
+let clockSkew = 0;
+const clockNow = () => Date.now() + clockSkew;
+window.clockNow = clockNow;
+function syncClock(info) {
+  if (!info || !info.current) return;
+  const server = Date.parse(info.current);
+  if (!Number.isFinite(server)) return;
+  clockSkew = server - Date.now();
+  // Let the timeline redraw immediately instead of waiting for its next rebuild tick.
+  if (typeof window.refreshShiftTimeline === 'function') window.refreshShiftTimeline();
+}
+window.syncClock = syncClock;
+const today = () => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(clockNow()));
 let member = null;
 let items = [], editing = null, editingSpecial = null, setup = true, generation = 0, rules = null;
 async function api(url, method='GET', body) {
@@ -22,6 +35,7 @@ async function load() {
     if(token !== generation)return;
     // Defence in depth for members even if an admin cookie is also present in the browser.
     const visible = admin ? data.items : data.items.filter(s => s.members.some(m => m.name === member?.username));
+    syncClock(data.now);
     items=visible; rules=data.rules; window.updateShiftTimeline(items); render(); $('status').textContent='';
   } catch(e) { if(token===generation){ $('shifts').replaceChildren(); $('status').textContent=e.message; if(!admin && e.status===401)await bootMember(); } }
 }
@@ -50,11 +64,28 @@ function render() {
       if (!own) { card.append(el('p','','此班次未安排你值班。')); $('shifts').append(card); continue; }
       if (own.checked_at) { card.append(el('p','', '你已于 '+new Date(own.checked_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})+' 签到。')); $('shifts').append(card); continue; }
       const form=el('form','check-form');
-      const submit=el('button','btn primary','确认到岗签到');submit.type='submit';
-      // Mirror the server window: check-in opens early_minutes before start and closes at end.
+      // Same animated control as 点击登记; turns light green once the check-in is recorded.
+      const {btn: submit, text: submitText} = window.animatedButton('点击登记', '确认登记',
+        async (button, label) => {
+          button.disabled = true;
+          try {
+            const result = await api(`/api/schedules/${s.id}/check-in`,'POST');
+            button.classList.add('registered');
+            label.textContent = '签到完成';
+            $('status').textContent = result.chained?.length
+              ? `签到成功，已自动签到后续相连的 ${result.chained.length} 个班次。`
+              : '签到成功，已记录到岗时间。';
+            setTimeout(() => load(), 900);
+          } catch (err) {
+            $('status').textContent = err.message;
+            button.disabled = false;
+          }
+        }, 'check-in-button');
+      // Mirror the server window: opens early_minutes before start and closes at end.
       const range=window.ShiftTimeline.interval(s);
       const window_ms={early:(rules?.early_minutes ?? 10)*60000, late:(rules?.late_minutes ?? 15)*60000, absent:(rules?.absent_minutes ?? 30)*60000};
-      window.syncCheckInButton(submit, range, window_ms);
+      window.syncCheckInButton(submit, submitText, range, window_ms, clockNow());
+      submit.classList.toggle('is-locked', submit.disabled);
       form.dataset.shiftId=String(s.id);
       form.append(submit);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{const result=await api(`/api/schedules/${s.id}/check-in`,'POST');await load();$('status').textContent=result.chained?.length?`签到成功，已自动签到后续相连的 ${result.chained.length} 个班次。`:'签到成功，已记录到岗时间。';}catch(err){$('status').textContent=err.message;submit.disabled=false;}};card.append(form);
     }
@@ -72,6 +103,7 @@ if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
   $('logout').onclick=async()=>{try{await api('/api/admin/logout','POST');await boot();}catch(e){$('status').textContent=e.message;}};
   async function boot(){try{const state=await api('/api/admin/status');setup=state.setup;
     // Older backends do not send `permissions`; treat that as full access rather than hiding every menu.
+    syncClock(state.now);
     window.adminPermissions = state.logged_in && Array.isArray(state.permissions) ? state.permissions : null;
     window.canEditStatus = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('schedule');
     window.canEditField = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('field');
@@ -81,8 +113,12 @@ if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
 if(!admin) setInterval(()=>{
   for(const form of document.querySelectorAll('#shifts .check-form')) {
     const button=form.querySelector('button[type=submit]'), shift=items.find(s=>String(s.id)===form.dataset.shiftId);
-    if(button && shift) syncCheckInButton(button, window.ShiftTimeline.interval(shift), {
-      early:(rules?.early_minutes ?? 10)*60000, late:(rules?.late_minutes ?? 15)*60000, absent:(rules?.absent_minutes ?? 30)*60000});
+    const label=form.querySelector('.animated-button .text');
+    if(button && label && shift) {
+      syncCheckInButton(button, label, window.ShiftTimeline.interval(shift), {
+        early:(rules?.early_minutes ?? 10)*60000, late:(rules?.late_minutes ?? 15)*60000, absent:(rules?.absent_minutes ?? 30)*60000}, clockNow());
+      if(!button.classList.contains('registered')) button.classList.toggle('is-locked', button.disabled);
+    }
   }
 }, 20000);
 
@@ -99,7 +135,7 @@ async function bootMember() {
     document.body.classList.toggle('auth-pending', !member);
     if ($('memberAuth')) $('memberAuth').hidden = !!member;
     $('workspace').hidden = !member;
-    if (member) { if ($('memberGreeting')) $('memberGreeting').textContent = member.username+'，欢迎回来'; await load(); }
+    if (member) { syncClock(state.now); if ($('memberGreeting')) $('memberGreeting').textContent = member.username+'，欢迎回来'; await load(); }
     else { ++generation; items=[]; window.updateShiftTimeline([]); $('shifts').replaceChildren(); }
   } catch (err) { $('memberLoginStatus').textContent=err.message; }
 }

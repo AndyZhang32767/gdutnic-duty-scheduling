@@ -2,8 +2,8 @@
 let weeklyLoaded = false;
 const weekdays = ['周一','周二','周三','周四','周五','周六','周日'];
 function showPage(page) {
-  const pages = {daily:'dailyPage', weekly:'weeklyPage', special:'specialPage', members:'membersPage', field:'fieldPage', settings:'settingsPage'};
-  const tabs = {daily:'dailyTab', weekly:'weeklyTab', special:'specialTab', members:'membersTab', field:'fieldTab', settings:'settingsTab'};
+  const pages = {daily:'dailyPage', weekly:'weeklyPage', special:'specialPage', swap:'swapPage', members:'membersPage', field:'fieldPage', settings:'settingsPage', logs:'logsPage'};
+  const tabs = {daily:'dailyTab', weekly:'weeklyTab', special:'specialTab', swap:'swapTab', members:'membersTab', field:'fieldTab', settings:'settingsTab', logs:'logsTab'};
   for (const [key, id] of Object.entries(pages)) { $(id).hidden = key !== page; }
   for (const [key, id] of Object.entries(tabs)) { $(id).classList.toggle('active', key === page); }
 }
@@ -62,6 +62,8 @@ $('weeklyForm').onsubmit = async e => {
   finally { submit.disabled = false; }
 };
 // Use the Shanghai date, independently of the browser timezone.
+$('generateFrom').min = today();
+$('generateFrom').value = today();
 $('generateUntil').min = today();
 $('generateUntil').value = today();
 // Clearing schedules is destructive: a typed confirmation card guards the request.
@@ -83,7 +85,7 @@ $('clearForm').onsubmit = async e => {
     const result = await api('/api/admin/schedules', 'DELETE');
     $('clearDialog').close();
     await load();
-    $('weeklyStatus').textContent = `已清除 ${result.deleted} 个班次及其签到记录，每周固定排班表已保留。`;
+    $('weeklyStatus').textContent = `已清除 ${result.deleted} 个班次，其中 ${result.archived} 条打卡记录已归档保留，可继续查询出勤历史。`;
   } catch (err) { $('clearStatus').textContent = err.message; }
   finally { submit.disabled = false; }
 };
@@ -91,16 +93,20 @@ $('publishForm').onsubmit = async e => {
   e.preventDefault(); if (!weeklyLoaded) return;
   const submit = e.currentTarget.querySelector('[type=submit]');
   if (!$('weeklyReviewed').checked) { $('weeklyStatus').textContent = '请先核对图片中的人员姓名并勾选确认。'; return; }
+  const start = $('generateFrom').value;
   const end = $('generateUntil').value;
-  if (!end || end < today()) { $('weeklyStatus').textContent = '生成到的日期不能早于今天。'; return; }
+  if (!start) { $('weeklyStatus').textContent = '请选择排班开始日期。'; return; }
+  if (start < today()) { $('weeklyStatus').textContent = '开始日期不能早于今天。'; return; }
+  if (!end) { $('weeklyStatus').textContent = '请选择排班结束日期。'; return; }
+  if (end < start) { $('weeklyStatus').textContent = '结束日期不能早于开始日期。'; return; }
   submit.disabled = true;
   try {
     await api('/api/admin/weekly-roster', 'PUT', readWeekly());
-    const result = await api('/api/admin/weekly-roster/publish', 'POST', {end_date:end});
+    const result = await api('/api/admin/weekly-roster/publish', 'POST', {start_date:start, end_date:end});
     const note = result.created === 0 && result.skipped === 0
-      ? '所选日期到今天之间没有新的班次需要生成。'
-      : `新增 ${result.created} 个班次，跳过 ${result.skipped} 个已存在或时间冲突的班次。`;
-    $('weeklyStatus').textContent = `已按每周排班匹配至 ${end}：${note}`;
+      ? '所选区间内没有需要生成的班次。'
+      : `新增或覆盖 ${result.created} 个班次，跳过 ${result.skipped} 个已有人打卡的班次。`;
+    $('weeklyStatus').textContent = `已按每周排班生成 ${start} 至 ${end}：${note}`;
     await load();
   } catch (err) { $('weeklyStatus').textContent = err.message; }
   finally { submit.disabled = false; }

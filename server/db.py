@@ -78,6 +78,23 @@ CREATE TABLE IF NOT EXISTS attendance (
  name TEXT NOT NULL, checked_at TEXT, status_override TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(shift_id,name)
 );
+CREATE TABLE IF NOT EXISTS swaps (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ shift_a INTEGER NOT NULL, name_a TEXT NOT NULL,
+ shift_b INTEGER NOT NULL, name_b TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ UNIQUE (shift_a, name_a), UNIQUE (shift_b, name_b)
+);
+CREATE TABLE IF NOT EXISTS operation_log (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
+ role TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, detail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operation_log_at ON operation_log(at);
+CREATE TABLE IF NOT EXISTS attendance_history (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, start TEXT NOT NULL,
+ end TEXT NOT NULL, name TEXT NOT NULL, checked_at TEXT NOT NULL,
+ location TEXT NOT NULL DEFAULT '', note TEXT NOT NULL, archived_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS weekly_instances (
  day TEXT NOT NULL, slot INTEGER NOT NULL,
  shift_id INTEGER NOT NULL UNIQUE REFERENCES shifts(id) ON DELETE CASCADE,
@@ -88,7 +105,7 @@ CREATE TABLE IF NOT EXISTS weekly_instances (
 COLUMNS = {'shifts': {'special': 'INTEGER NOT NULL DEFAULT 0'},
            'member_accounts': {'permissions': "VARCHAR(191) NOT NULL DEFAULT ''"},
            'attendance': {'status_override': "VARCHAR(16) NOT NULL DEFAULT ''"},
-           'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0'}}
+           'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0', 'status': 'TINYINT NOT NULL DEFAULT 2'}}
 
 
 

@@ -1,7 +1,9 @@
 """Monthly attendance statistics and weekly status for the admin overview."""
 from datetime import date, datetime, timedelta
 
-from server import db, duty_settings, schedule_store
+from pypinyin import lazy_pinyin
+
+from server import db, duty_settings, schedule_store, system_clock
 
 STATUS_LABELS = {'normal': '正常', 'late': '迟到', 'absent': '旷班', 'pending': '待签到'}
 # Statuses an administrator may set by hand from the overview card.
@@ -83,7 +85,7 @@ def _month_bounds(month):
 
 
 def overview(month=None, now=None):
-    now = now or datetime.now(schedule_store.TZ)
+    now = system_clock.now() if now is None else now
     rules = duty_settings.load()
     first, last = _month_bounds(month or now.strftime('%Y-%m'))
     week_start = now.date() - timedelta(days=now.weekday())
@@ -115,6 +117,26 @@ def overview(month=None, now=None):
                             late += 1
                         elif member['status'] == 'absent':
                             absent += 1
+        # Archived check-ins (schedules cleared) still count for the month.
+        live = {(m['name'], m['checked_at']) for item in month_items for m in item['members']
+                if m['checked_at']}
+        for row in conn.execute(
+                'SELECT day,start,end,name,checked_at FROM attendance_history'
+                ' WHERE day>=? AND day<=?', (first.isoformat(), last.isoformat())).fetchall():
+            if (row['name'], row['checked_at']) in live:
+                continue
+            shift = {'day': row['day'], 'start': row['start'], 'end': row['end']}
+            if schedule_store.shift_bounds(shift)[0] > now:
+                continue
+            total += 1
+            member = {'name': row['name'], 'checked_at': row['checked_at'], 'status_override': ''}
+            status = member_status(shift, member, now, rules)
+            if status == 'normal':
+                normal += 1
+            elif status == 'late':
+                late += 1
+            elif status == 'absent':
+                absent += 1
         timeline = []
         today = now.date().isoformat()
         previous = (now.date() - timedelta(days=1)).isoformat()
@@ -147,6 +169,66 @@ def overview(month=None, now=None):
         'timeline': timeline,
         'week': {'start': week_start.isoformat(), 'end': week_end.isoformat(), 'days': days},
     }
+
+
+def pinyin_key(name):
+    """Sort key: full pinyin of the name, falling back to the raw text."""
+    return ''.join(lazy_pinyin(str(name or ''))).lower(), str(name or '')
+
+
+def anomaly_stats(weeks=2, now=None):
+    """Late/absent counts per person over the last `weeks` rolling weeks.
+
+    The window ends now and starts `weeks * 7` days back; when the data does not reach
+    that far, whatever falls inside the window is counted. Ranking breaks ties by name
+    pinyin, so equal counts read alphabetically.
+    """
+    weeks = 2 if int(weeks) == 2 else 4
+    now = system_clock.now() if now is None else now
+    rules = duty_settings.load()
+    start_day = (now.date() - timedelta(days=weeks * 7 - 1)).isoformat()
+    end_day = now.date().isoformat()
+    late = {}
+    absent = {}
+    with db.read() as conn:
+        schedule_store.init(conn)
+        rows = conn.execute(
+            'SELECT * FROM shifts WHERE day>=? AND day<=?', (start_day, end_day)).fetchall()
+        attendance = _attendance_by_shift(conn, rows)
+        seen = set()
+        for row in rows:
+            # Only finished (or at least started) duties can be judged.
+            if schedule_store.shift_bounds(row)[0] > now:
+                continue
+            for member in attendance.get(row['id'], []):
+                status = member_status(row, member, now, rules)
+                seen.add((row['day'], row['start'], member['name'], member['checked_at']))
+                if status == 'late':
+                    late[member['name']] = late.get(member['name'], 0) + 1
+                elif status == 'absent':
+                    absent[member['name']] = absent.get(member['name'], 0) + 1
+        # Archived check-ins from cleared schedules count too.
+        for row in conn.execute(
+                'SELECT day,start,end,name,checked_at FROM attendance_history'
+                ' WHERE day>=? AND day<=?', (start_day, end_day)).fetchall():
+            if (row['day'], row['start'], row['name'], row['checked_at']) in seen:
+                continue
+            shift = {'day': row['day'], 'start': row['start'], 'end': row['end']}
+            if schedule_store.shift_bounds(shift)[0] > now:
+                continue
+            status = member_status(shift, {'checked_at': row['checked_at']}, now, rules)
+            if status == 'late':
+                late[row['name']] = late.get(row['name'], 0) + 1
+            elif status == 'absent':
+                absent[row['name']] = absent.get(row['name'], 0) + 1
+
+    def ranking(counts):
+        items = [{'name': name, 'count': count} for name, count in counts.items() if count]
+        items.sort(key=lambda item: (-item['count'], pinyin_key(item['name'])))
+        return items
+
+    return {'weeks': weeks, 'start': start_day, 'end': end_day,
+            'late': ranking(late), 'absent': ranking(absent)}
 
 
 def _range_items(items, day):

@@ -3,7 +3,8 @@ const WEEK_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', 
 const STATUS_TEXT = {normal:'正常', late:'迟到', absent:'旷班', pending:'待签到'};
 let overviewData = null, overviewToken = 0;
 
-const monthInput = () => $('month');
+// 概览固定显示本月；月份选择已从页面移除。
+const currentMonth = () => today().slice(0, 7);
 const shiftTime = s => `${s.start} — ${s.end < s.start ? '次日 ' : ''}${s.end}`;
 const memberLine = m => `${m.name} · ${STATUS_TEXT[m.status] || '待签到'}`;
 
@@ -98,7 +99,7 @@ function editAttendance(shift, member) {
 }
 
 async function loadOverview() {
-  const month = monthInput().value || today().slice(0, 7);
+  const month = currentMonth();
   const token = ++overviewToken;
   $('status').textContent = '正在加载概览…';
   try {
@@ -122,6 +123,7 @@ function renderOverview() {
   items = overviewData.timeline;
   window.updateShiftTimeline(items);
   renderWeek(overviewData.week, overviewData.today);
+  loadAnomaly(anomalyWeeks);
 }
 
 // Navigation mirrors the account's permission groups.
@@ -136,7 +138,7 @@ function applyPermissions(granted) {
   }
   const held = new Set(granted);
   const needs = {dailyTab: 'schedule', weeklyTab: 'schedule', specialTab: 'schedule',
-                 fieldTab: 'field', settingsTab: 'schedule'};
+                 fieldTab: 'field', settingsTab: 'schedule', logsTab: 'schedule'};
   // Any of the account permissions unlocks the user-management page.
   if ($('membersTab')) $('membersTab').hidden = !['accounts', 'accounts_manage', 'accounts_protected'].some(p => held.has(p));
   let firstVisible = null;
@@ -151,12 +153,7 @@ function applyPermissions(granted) {
 }
 
 function initOverview() {
-  monthInput().value = today().slice(0, 7);
-  monthInput().onchange = loadOverview;
-  $('today').onclick = () => {
-    monthInput().value = today().slice(0, 7);
-    loadOverview();
-  };
+  // 月份固定为本月，无需选择控件。
   $('refresh').onclick = loadOverview;
   $('closeDetail').onclick = () => $('detailDialog').close();
   window.loadOverview = loadOverview;
@@ -164,3 +161,46 @@ function initOverview() {
   window.renderOverview = renderOverview;
 }
 if (document.body.dataset.admin === 'true') initOverview();
+
+// 异常统计：近 2 周 / 近 4 周的迟到与旷班横向排行。
+let anomalyWeeks = 2;
+
+function renderAnomalyChart(container, items, totalLabel) {
+  container.replaceChildren();
+  if (!items.length) {
+    container.append(el('p', 'anomaly-empty', '统计周期内没有记录'));
+    return 0;
+  }
+  const max = Math.max(...items.map(item => item.count), 1);
+  for (const item of items) {
+    const row = el('div', 'anomaly-row');
+    const name = el('span', 'anomaly-name', item.name);
+    name.title = item.name;
+    const track = el('div', 'anomaly-track');
+    const fill = el('div', 'anomaly-fill');
+    fill.style.width = `${Math.max(4, Math.round(item.count / max * 100))}%`;
+    track.append(fill);
+    row.append(name, track, el('span', 'anomaly-count', String(item.count)));
+    container.append(row);
+  }
+  return items.reduce((sum, item) => sum + item.count, 0);
+}
+
+async function loadAnomaly(weeks = anomalyWeeks) {
+  anomalyWeeks = weeks;
+  $('anomaly2').classList.toggle('active', weeks === 2);
+  $('anomaly4').classList.toggle('active', weeks === 4);
+  try {
+    const data = await api('/api/admin/anomalies?weeks=' + weeks);
+    const lateTotal = renderAnomalyChart($('lateChart'), data.late);
+    const absentTotal = renderAnomalyChart($('absentChart'), data.absent);
+    $('lateTotal').textContent = `共 ${lateTotal} 次`;
+    $('absentTotal').textContent = `共 ${absentTotal} 次`;
+    $('anomalyRange').textContent = `统计范围：${data.start} 至 ${data.end}（近 ${data.weeks} 周）`;
+  } catch (err) {
+    $('anomalyRange').textContent = err.message;
+  }
+}
+
+$('anomaly2').onclick = () => loadAnomaly(2);
+$('anomaly4').onclick = () => loadAnomaly(4);
