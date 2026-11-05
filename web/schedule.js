@@ -24,7 +24,19 @@ async function api(url, method='GET', body) {
   return data;
 }
 function el(tag, cls, text) { const n=document.createElement(tag); if(cls)n.className=cls; if(text !== undefined)n.textContent=text; return n; }
-function button(text, cls, fn) { const n=el('button','btn '+(cls==='delete'?'danger':cls==='secondary'?'tonal':cls||'primary'),text); n.type='button'; n.onclick=fn; return n; }
+// Semantic icons for card actions; CSS masks inherit each button's current colour.
+const ACTION_ICONS = {
+  '编辑班次': 'pencil-outline', '编辑': 'pencil-outline',
+  '删除': 'delete-outline', '删除账号': 'delete-outline',
+  '更改权限': 'shield-account-outline', '更改密码': 'lock-outline',
+  '重置密码': 'lock-reset', '停用账号': 'account-off-outline',
+  '启用账号': 'account-check-outline',
+};
+function button(text, cls, fn) {
+  const n=el('button','btn '+(cls==='delete'?'danger':cls==='secondary'?'tonal':cls||'primary'),text);
+  if (ACTION_ICONS[text]) n.dataset.icon = ACTION_ICONS[text];
+  n.type='button'; n.onclick=fn; return n;
+}
 async function load() {
   if (admin && typeof window.loadOverview === 'function') { await window.loadOverview(); return; }
   const token=++generation;

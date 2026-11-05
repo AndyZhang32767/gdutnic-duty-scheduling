@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#186078">
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/schedule.css">
+  <link rel="stylesheet" href="/static/component-icons.css">
 </head>
 <body data-admin="true">
 <section id="authCard" class="admin-board">
@@ -20,7 +21,7 @@
     <label class="outlined-field"><input name="username" autocomplete="username" placeholder=" " required><span>用户名</span></label>
     <label class="outlined-field"><input name="password" type="password" autocomplete="current-password" placeholder=" " required><span>密码</span></label>
     <p id="authStatus" class="admin-auth-status" role="alert"></p>
-    <button id="authSubmit" class="btn primary">登录</button>
+    <button id="authSubmit" class="btn primary" data-icon="login">登录</button>
   </form>
 </section>
 <div id="workspace" class="ga-app is-visible" hidden>
@@ -45,21 +46,21 @@
     <div class="ga-main-body">
       <section id="dailyPage">
         <section class="hero">
-          <div><p class="eyebrow">GDUT NETWORK INFORMATION CENTER</p><h1>概览</h1><p>查看本月出勤情况、当前值班与本周排班。</p></div>
+          <div><p class="eyebrow">GDUT NETWORK INFORMATION CENTER</p><h1 data-icon="chart-box-outline">概览</h1><p>查看本月出勤情况、当前值班与本周排班。</p></div>
 
         </section>
         <div class="stats overview-stats">
-          <div><strong id="attendanceRate">—</strong><span id="attendanceDetail">本月出勤率（正常 / 总出勤）</span></div>
-          <div><strong id="lateCount">0</strong><span>本月迟到数</span></div>
-          <div><strong id="absentCount">0</strong><span>本月旷班数</span></div>
+          <div data-icon="calendar-check-outline" class="stat-with-icon"><strong id="attendanceRate">—</strong><span id="attendanceDetail">本月出勤率（正常 / 总出勤）</span></div>
+          <div data-icon="clock-alert-outline" class="stat-with-icon"><strong id="lateCount">0</strong><span>本月迟到数</span></div>
+          <div data-icon="account-off-outline" class="stat-with-icon"><strong id="absentCount">0</strong><span>本月旷班数</span></div>
         </div>
-        <div class="section-head"><h2>当前值班</h2><div><button id="refresh" class="btn tonal">刷新</button><button id="add" class="btn primary">＋ 新增班次</button></div></div>
+        <div class="section-head"><h2 data-icon="clock-outline">当前值班</h2><div><button id="refresh" class="btn tonal" data-icon="refresh">刷新</button><button id="add" class="btn primary" data-icon="plus">新增班次</button></div></div>
         <div id="shiftTimeline" class="shift-timeline"></div>
         <p id="status" role="status" aria-live="polite"></p>
-        <section class="section-head week-head"><h2>本周排班</h2><span id="weekRange" class="hint"></span></section>
+        <section class="section-head range-head"><h2 id="weekTitle" data-icon="calendar-week-outline">本周排班</h2><div class="range-nav"><button type="button" id="weekPrev" class="btn tonal icon-btn" data-icon="chevron-left" aria-label="上一周" title="上一周" disabled></button><span id="weekRange" class="hint range-label"></span><button type="button" id="weekNext" class="btn tonal icon-btn" data-icon="chevron-right" aria-label="下一周" title="下一周" disabled></button><span class="range-today"><button type="button" id="weekToday" class="btn tonal" data-icon="calendar-outline">回到本周</button></span></div></section>
         <section id="weekBoard" class="week-board"></section>
         <section class="section-head anomaly-head">
-          <h2>异常统计</h2>
+          <h2 data-icon="chart-box-outline">异常统计</h2>
           <div class="segmented" role="group" aria-label="统计周期">
             <button type="button" id="anomaly2" class="segment active" data-weeks="2">近 2 周</button>
             <button type="button" id="anomaly4" class="segment" data-weeks="4">近 4 周</button>
@@ -68,11 +69,11 @@
         <p id="anomalyRange" class="hint"></p>
         <div class="anomaly-board">
           <section class="card anomaly-card" id="lateCard">
-            <div class="anomaly-title"><h3>迟到排行</h3><span id="lateTotal" class="anomaly-total"></span></div>
+            <div class="anomaly-title"><h3 data-icon="clock-alert-outline">迟到排行</h3><span id="lateTotal" class="anomaly-total"></span></div>
             <div id="lateChart" class="anomaly-chart"></div>
           </section>
           <section class="card anomaly-card" id="absentCard">
-            <div class="anomaly-title"><h3>旷班次数</h3><span id="absentTotal" class="anomaly-total"></span></div>
+            <div class="anomaly-title"><h3 data-icon="account-off-outline">旷班次数</h3><span id="absentTotal" class="anomaly-total"></span></div>
             <div id="absentChart" class="anomaly-chart"></div>
           </section>
         </div>
@@ -80,15 +81,15 @@
       </section>
 
       <section id="weeklyPage" hidden>
-        <div class="hero"><div><h1>每周排班</h1><p>维护周一到周日的固定人员，自动匹配星期，生成到指定日期。</p></div></div>
+        <div class="hero"><div><h1 data-icon="calendar-week-outline">每周排班</h1><p>维护周一到周日的固定人员，自动匹配星期，生成到指定日期。</p></div></div>
         <form id="weeklyForm" method="post">
           <div class="card weekly-config"><div id="weeklyTimes" class="weekly-times"></div></div>
           <div class="weekly-table-wrap">
             <div class="weekly-table-tools">
               <span>可从 CSV 自动填充人员，模板第一行为星期、第一列为班次，多人与“/”分隔。</span>
               <div class="actions">
-                <button type="button" id="downloadRoster" class="btn tonal">下载 CSV 模板</button>
-                <button type="button" id="importRoster" class="btn primary">一键导入</button>
+                <button type="button" id="downloadRoster" class="btn tonal" data-icon="download">下载 CSV 模板</button>
+                <button type="button" id="importRoster" class="btn primary" data-icon="upload">一键导入</button>
                 <input id="rosterFile" type="file" accept=".csv,text/csv,text/plain" hidden>
               </div>
             </div>
@@ -100,12 +101,12 @@
           </div>
           <label class="review-check"><input id="weeklyReviewed" type="checkbox"><span>我已核对人员姓名</span></label>
           <div class="actions">
-            <button type="submit" class="btn primary">保存每周排班</button>
-            <button type="button" id="clearSchedules" class="btn danger">清除所有排班</button>
+            <button type="submit" class="btn primary" data-icon="content-save-outline">保存每周排班</button>
+            <button type="button" id="clearSchedules" class="btn danger" data-icon="calendar-remove-outline">清除所有排班</button>
           </div>
         </form>
         <div class="card publish-card">
-          <h2>生成排班</h2>
+          <h2 data-icon="calendar-check-outline">生成排班</h2>
           <p>按已保存的每周固定排班表匹配星期，在所选日期区间内生成班次。区间内已生成或时间冲突的班次会被新排班覆盖；已有人打卡的班次会跳过，不会覆盖签到记录。</p>
           <div class="publish-range">
             <label for="generateFrom">排班开始于<input id="generateFrom" type="date" required></label>
@@ -113,7 +114,7 @@
             <label for="generateUntil">排班结束于<input id="generateUntil" type="date" required></label>
           </div>
           <form id="publishForm" method="post" class="publish-form">
-            <button type="submit" class="btn primary">生成排班表</button>
+            <button type="submit" class="btn primary" data-icon="calendar-check-outline">生成排班表</button>
           </form>
         </div>
         <p id="weeklyStatus" role="status" aria-live="polite"></p>
@@ -121,22 +122,22 @@
 
       <section id="specialPage" hidden>
         <div class="hero">
-          <div><h1>特殊排班</h1><p>单独添加临时班次，可一次安排多位值班人员，保存后可按日期查看并修改。</p></div>
-          <button id="addSpecial" class="btn primary">＋ 新增特殊排班</button>
+          <div><h1 data-icon="calendar-clock-outline">特殊排班</h1><p>单独添加临时班次，可一次安排多位值班人员，保存后可按日期查看并修改。</p></div>
+          <button id="addSpecial" class="btn primary" data-icon="plus">新增特殊排班</button>
         </div>
         <div class="stats">
-          <div><strong id="specialCount">0</strong><span>个未来特殊班次</span></div>
-          <div><strong id="specialPeople">0</strong><span>人次排班</span></div>
+          <div data-icon="calendar-clock-outline" class="stat-with-icon"><strong id="specialCount">0</strong><span>个未来特殊班次</span></div>
+          <div data-icon="account-group-outline" class="stat-with-icon"><strong id="specialPeople">0</strong><span>人次排班</span></div>
         </div>
-        <div class="section-head"><h2>未来特殊排班</h2><div><button id="refreshSpecial" class="btn tonal">刷新</button></div></div>
+        <div class="section-head"><h2 data-icon="calendar-clock-outline">未来特殊排班</h2><div><button id="refreshSpecial" class="btn tonal" data-icon="refresh">刷新</button></div></div>
         <p id="specialStatus" role="status" aria-live="polite"></p>
         <section id="specialList" class="shifts"></section>
       </section>
 
       <section id="swapPage" hidden>
         <div class="hero">
-          <div><h1>调换值班</h1><p>两位值班人员互换各自的一个班次，需双方协商同意。班次开始后无法再删除，双方都完成签到后记录自动消失。</p></div>
-          <button id="addSwap" class="btn primary">＋ 添加调班</button>
+          <div><h1 data-icon="swap-horizontal">调换值班</h1><p>两位值班人员互换各自的一个班次，需双方协商同意。班次开始后无法再删除，双方都完成签到后记录自动消失。</p></div>
+          <button id="addSwap" class="btn primary" data-icon="plus">添加调班</button>
         </div>
         <p id="swapStatus" role="status" aria-live="polite"></p>
         <section id="swapList" class="shifts"></section>
@@ -144,10 +145,10 @@
 
       <section id="membersPage" hidden>
         <div class="hero">
-          <div><h1>用户管理</h1><p>所有账号统一管理，每个账号带一张权限表。用户名为姓名，新增账号的初始密码为 gg2017。</p></div>
+          <div><h1 data-icon="account-group-outline">用户管理</h1><p>所有账号统一管理，每个账号带一张权限表。用户名为姓名，新增账号的初始密码为 gg2017。</p></div>
           <div class="hero-actions">
-            <label class="member-search"><input id="memberSearch" type="search" placeholder="搜索姓名" autocomplete="off" aria-label="搜索用户"></label>
-            <button id="addMember" class="btn primary">添加账号</button>
+            <label class="member-search" data-icon="magnify"><input id="memberSearch" type="search" placeholder="搜索姓名" autocomplete="off" aria-label="搜索用户"></label>
+            <button id="addMember" class="btn primary" data-icon="account-plus-outline">添加账号</button>
           </div>
         </div>
         <p id="membersStatus" role="status" aria-live="polite"></p>
@@ -156,11 +157,19 @@
 
       <section id="fieldPage" hidden>
         <div class="hero">
-          <div><h1>外勤管理</h1><p>查看本月参与外勤的成员，未参与者标红。</p></div>
-          <div class="date-box"><label for="fieldMonth">外勤月份</label><input id="fieldMonth" type="month" required><button id="fieldToday" class="btn tonal">回到本月</button></div>
+          <div><h1 data-icon="map-marker-check-outline">外勤管理</h1><p>查看本月参与外勤的成员，未参与者标红。</p></div>
         </div>
+        <section class="section-head range-head">
+          <h2 id="fieldTitle" data-icon="calendar-week-outline">本月外勤</h2>
+          <div class="range-nav">
+            <button id="fieldPrev" class="btn tonal icon-btn" data-icon="chevron-left" aria-label="上个月" title="上个月" type="button" disabled></button>
+            <span id="fieldRange" class="hint range-label"></span>
+            <button id="fieldNext" class="btn tonal icon-btn" data-icon="chevron-right" aria-label="下个月" title="下个月" type="button" disabled></button>
+            <span class="range-today"><button id="fieldToday" class="btn tonal" data-icon="calendar-outline" type="button" hidden>回到本月</button></span>
+          </div>
+        </section>
         <div class="stats overview-stats">
-          <div><strong id="fieldRegistered">0</strong><span id="fieldSummary">本月已参加外勤</span></div>
+          <div data-icon="map-marker-check-outline" class="stat-with-icon"><strong id="fieldRegistered">0</strong><span id="fieldSummary">本月已参加外勤</span></div>
         </div>
         <p id="fieldAdminStatus" role="status" aria-live="polite"></p>
         <section id="fieldBoard" class="field-grid"></section>
@@ -168,12 +177,12 @@
 
       <section id="logsPage" hidden>
         <div class="hero">
-          <div><h1>查看日志</h1><p>记录管理员与值班账号的操作，最新在前。</p></div>
+          <div><h1 data-icon="clipboard-text-outline">查看日志</h1><p>记录管理员与值班账号的操作，最新在前。</p></div>
         </div>
         <div class="log-toolbar">
-          <label class="member-search"><input id="logSearch" type="search" placeholder="搜索操作或内容" autocomplete="off" aria-label="搜索日志"></label>
+          <label class="member-search" data-icon="magnify"><input id="logSearch" type="search" placeholder="搜索操作或内容" autocomplete="off" aria-label="搜索日志"></label>
           <label class="log-actor"><select id="logActor"><option value="">全部账号</option></select></label>
-          <button id="logRefresh" class="btn tonal" type="button">刷新</button>
+          <button id="logRefresh" class="btn tonal" type="button" data-icon="refresh">刷新</button>
         </div>
         <p id="logsStatus" role="status" aria-live="polite"></p>
         <div class="log-table-wrap">
@@ -185,9 +194,9 @@
       </section>
 
       <section id="settingsPage" hidden>
-        <div class="hero"><div><h1>其他设置</h1><p>调整值班签到的时间窗口。</p></div></div>
+        <div class="hero"><div><h1 data-icon="tune-variant">其他设置</h1><p>调整值班签到的时间窗口。</p></div></div>
         <form id="rulesForm" method="post" class="card rules-card">
-          <h2>值班时间</h2>
+          <h2 data-icon="clock-outline">值班时间</h2>
           <p class="hint">以下时间均相对于班次开始时间计算。</p>
           <div class="rules-grid">
             <label>提前打卡时间（分钟）<input name="early_minutes" type="number" min="0" max="120" step="1" required></label>
@@ -196,11 +205,11 @@
           </div>
           <p class="hint">三个时间都从班次开始时间起算。提前打卡：开始前多少分钟起显示“确认到岗签到”。迟到：开始后多少分钟内的签到记为迟到。旷班：开始后超过多少分钟仍未签到，或超过该时间才签到，都记为旷班；因此旷班时间必须大于迟到时间。</p>
           <p id="rulesStatus" role="status" aria-live="polite"></p>
-          <button type="submit" class="btn primary">保存设置</button>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存设置</button>
         </form>
 
         <form id="clockForm" method="post" class="card rules-card">
-          <h2>系统时间</h2>
+          <h2 data-icon="clock-outline">系统时间</h2>
           <label class="review-check"><input id="clockAutomatic" type="checkbox" checked><span>自动设置</span></label>
           <div id="clockManual" class="clock-manual" hidden>
             <label>日期<input id="clockDate" type="date" required></label>
@@ -209,63 +218,63 @@
           </div>
           <p class="hint">取消自动设置后，按下「设置」会从所选的日期 小时:分钟:00 开始计时，签到窗口与统计都按该时间计算。</p>
           <p id="clockStatus" role="status" aria-live="polite"></p>
-          <button type="submit" class="btn primary">设置</button>
+          <button type="submit" class="btn primary" data-icon="tune-variant">设置</button>
           <p class="clock-now">当前时间：<strong id="clockNow">—</strong></p>
         </form>
       </section>
 
       <dialog id="clearDialog">
         <form id="clearForm">
-          <div class="section-head"><h2>确认清除所有排班</h2><button type="button" id="closeClear" class="btn tonal">取消</button></div>
+          <div class="section-head"><h2>确认清除所有排班</h2><button type="button" id="closeClear" class="btn tonal" data-icon="close">取消</button></div>
           <p>此操作会删除所有日期的班次及签到记录，<strong>无法撤销</strong>。每周固定排班表和用户账号会保留。</p>
           <label>请输入“清除所有排班”以确认<input name="confirm" autocomplete="off" placeholder="清除所有排班" required></label>
           <p id="clearStatus" role="alert"></p>
-          <button type="submit" class="btn danger">确认清除</button>
+          <button type="submit" class="btn danger" data-icon="delete-outline">确认清除</button>
         </form>
       </dialog>
 
       <dialog id="editor">
         <form id="shiftForm" method="post">
-          <div class="section-head"><h2 id="editorTitle">新增班次</h2><button type="button" id="closeEditor" class="btn tonal">关闭</button></div>
+          <div class="section-head"><h2 id="editorTitle">新增班次</h2><button type="button" id="closeEditor" class="btn tonal" data-icon="close">关闭</button></div>
           <label>日期<input name="day" type="date" required></label>
           <div class="two"><label>开始时间<input name="start" type="time" required></label><label>结束时间<input name="end" type="time" required></label></div>
           <p class="hint">结束早于开始时，表示次日结束。</p>
           <label>值班人员<textarea name="members" rows="4" placeholder="每行一位姓名，也可用逗号分隔" required></textarea></label>
           <label>备注<textarea name="note" rows="2" maxlength="500" placeholder="值班事项或交接说明"></textarea></label>
           <p id="formStatus" role="alert"></p>
-          <button type="submit" class="btn primary">保存班次</button>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存班次</button>
         </form>
       </dialog>
 
       <dialog id="detailDialog">
-        <div class="section-head"><h2 id="detailTitle">班次详情</h2><button type="button" id="closeDetail" class="btn tonal">关闭</button></div>
+        <div class="section-head"><h2 id="detailTitle">班次详情</h2><button type="button" id="closeDetail" class="btn tonal" data-icon="close">关闭</button></div>
         <p id="detailMeta" class="hint"></p>
         <div id="detailMembers" class="detail-members"></div>
       </dialog>
 
       <dialog id="permissionDialog">
         <form id="permissionForm">
-          <div class="section-head"><h2 id="permissionTitle">更改权限</h2><button type="button" id="closePermission" class="btn tonal">关闭</button></div>
+          <div class="section-head"><h2 id="permissionTitle">更改权限</h2><button type="button" id="closePermission" class="btn tonal" data-icon="close">关闭</button></div>
           <p class="hint">勾选该账号可使用的功能组；拥有“更改权限”者才能为他人分配权限。</p>
           <div id="permissionList" class="permission-list"></div>
           <p id="permissionStatus" role="alert"></p>
-          <button type="submit" class="btn primary">保存权限</button>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存权限</button>
         </form>
       </dialog>
 
       <dialog id="memberPasswordDialog">
         <form id="memberPasswordForm">
-          <div class="section-head"><h2 id="memberPasswordTitle">更改密码</h2><button type="button" id="closeMemberPassword" class="btn tonal">关闭</button></div>
+          <div class="section-head"><h2 id="memberPasswordTitle">更改密码</h2><button type="button" id="closeMemberPassword" class="btn tonal" data-icon="close">关闭</button></div>
           <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>
           <p class="hint">保存后该账号的旧登录会立即失效。</p>
           <p id="memberPasswordStatus" role="alert"></p>
-          <button type="submit" class="btn primary">保存密码</button>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存密码</button>
         </form>
       </dialog>
 
       <dialog id="swapDialog">
         <form id="swapForm">
-          <div class="section-head"><h2>添加调班</h2><button type="button" id="closeSwap" class="btn tonal">关闭</button></div>
+          <div class="section-head"><h2>添加调班</h2><button type="button" id="closeSwap" class="btn tonal" data-icon="close">关闭</button></div>
           <p class="hint">先选择两位人员，再分别选择他们各自的班次。</p>
           <div class="swap-picker">
             <label>甲方<select id="swapPersonA" required><option value="">选择人员</option></select></label>
@@ -277,27 +286,27 @@
           </div>
           <label class="review-check"><input id="swapConfirmed" type="checkbox"><span>双方已协商完成并同意调班</span></label>
           <p id="swapFormStatus" role="alert"></p>
-          <button type="submit" class="btn primary">确认调班</button>
+          <button type="submit" class="btn primary" data-icon="swap-horizontal">确认调班</button>
         </form>
       </dialog>
 
       <dialog id="editStatusDialog">
         <form id="editStatusForm">
-          <div class="section-head"><h2 id="editStatusTitle">更改状态</h2><button type="button" id="closeEditStatus" class="btn tonal">关闭</button></div>
+          <div class="section-head"><h2 id="editStatusTitle">更改状态</h2><button type="button" id="closeEditStatus" class="btn tonal" data-icon="close">关闭</button></div>
           <p id="editStatusMeta" class="hint"></p>
           <div id="editStatusOptions" class="status-options"></div>
           <p id="editStatusNote" role="alert"></p>
-          <button type="submit" class="btn primary">保存</button>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存</button>
         </form>
       </dialog>
 
       <dialog id="memberEditor">
         <form id="memberForm" method="post">
-          <div class="section-head"><h2>添加账号</h2><button type="button" id="closeMember" class="btn tonal">关闭</button></div>
+          <div class="section-head"><h2>添加账号</h2><button type="button" id="closeMember" class="btn tonal" data-icon="close">关闭</button></div>
           <label>姓名<input name="username" maxlength="64" placeholder="值班人员姓名" required></label>
           <p class="hint">初始密码为 gg2017，用户登录后可自行修改。</p>
           <p id="memberFormStatus" role="alert"></p>
-          <button type="submit" class="btn primary">创建账号</button>
+          <button type="submit" class="btn primary" data-icon="account-plus-outline">创建账号</button>
         </form>
       </dialog>
     </div>

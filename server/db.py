@@ -8,15 +8,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from server.init_data import initialize
+
 ROOT = Path(__file__).resolve().parent.parent
+DATA = initialize(ROOT)
 # Both start scripts and CLI maintenance commands use the same configuration.
 try:
     from dotenv import load_dotenv
-    load_dotenv(ROOT / ".env")
+    load_dotenv(DATA / ".env")
 except ImportError:
-    if (ROOT / ".env").exists():
+    if (DATA / ".env").exists():
         raise RuntimeError("请先安装 requirements.txt 中的依赖")
-DATA = ROOT / "data"
 DB_PATH = DATA / "app.sqlite"
 
 _lock = threading.RLock()
@@ -185,11 +187,14 @@ def connect():
                 autocommit=True, connect_timeout=10, read_timeout=30, write_timeout=30,
             )
             if os.environ.get("MYSQL_SSL_CA"):
-                options.update(ssl_ca=os.environ["MYSQL_SSL_CA"], ssl_verify_cert=True, ssl_verify_identity=True)
+                certificate = Path(os.environ["MYSQL_SSL_CA"])
+                if not certificate.is_absolute():
+                    certificate = DATA / certificate
+                options.update(ssl_ca=str(certificate), ssl_verify_cert=True, ssl_verify_identity=True)
             try:
                 conn = MysqlConnection(pymysql.connect(**options))
             except pymysql.MySQLError as exc:
-                raise RuntimeError("MySQL 连接失败，请检查 .env 中的 MYSQL_* 配置和数据库服务") from exc
+                raise RuntimeError("MySQL 连接失败，请检查 data/.env 中的 MYSQL_* 配置和数据库服务") from exc
             try:
                 schema = (ROOT / "sql" / "mysql_schema.sql").read_text(encoding="utf-8")
                 for statement in schema.split(";"):

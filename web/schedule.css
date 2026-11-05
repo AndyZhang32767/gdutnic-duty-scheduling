@@ -77,7 +77,20 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 
 /* Overview: weekly board tones and per-member detail rows. */
 .overview-stats>div:first-child{background:var(--md-primary-container);color:var(--md-on-primary-container)}
-.week-head{margin-top:22.4px}
+.range-head{margin-top:22.4px}
+/* Week/month stepping: a compact pair of arrows around the visible range. */
+.range-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.range-label{min-width:15em;text-align:center;font-variant-numeric:tabular-nums}
+.range-today{display:inline-flex}
+@media(max-width:650px){
+  .range-head{flex-wrap:wrap;gap:8px}
+  .range-nav{width:100%;justify-content:space-between}
+  .range-label{min-width:0;flex:1;text-align:center}
+  /* 回到本月/本周 gets its own row so the arrows and range stay centred. */
+  .range-today{flex:0 0 100%;display:flex;justify-content:center}
+}
+.btn.icon-btn:disabled{opacity:1;color:var(--md-outline);background:var(--md-surface-low)}
+.btn.icon-btn:disabled::after{opacity:0}
 .week-board{display:flex;flex-direction:column;gap:8px;overflow-x:auto;padding-bottom:4.8px}
 .week-row{display:grid;grid-template-columns:44px repeat(7,minmax(0,1fr));gap:12px;align-items:stretch}
 .week-head-row{align-items:end}

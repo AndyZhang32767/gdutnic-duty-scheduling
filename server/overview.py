@@ -84,11 +84,43 @@ def _month_bounds(month):
     return first, following - timedelta(days=1)
 
 
-def overview(month=None, now=None):
+def _week_start(day):
+    """Monday of the week containing `day`."""
+    return day - timedelta(days=day.weekday())
+
+
+def parse_week(week=None, now=None):
+    """Accepts a `YYYY-MM-DD` anchor anywhere in the week; defaults to the current one."""
+    now = system_clock.now() if now is None else now
+    if not week:
+        return _week_start(now.date())
+    return _week_start(date.fromisoformat(str(week)))
+
+
+def week_span(now=None):
+    """Earliest and latest week that hold a shift, always including the current week.
+
+    Arrows stop at these bounds, so a week with no shifts can still be stepped through
+    instead of stranding the user in the middle of a gap.
+    """
+    now = system_clock.now() if now is None else now
+    current = _week_start(now.date())
+    with db.read() as conn:
+        schedule_store.init(conn)
+        row = conn.execute('SELECT MIN(day) AS first, MAX(day) AS last FROM shifts').fetchone()
+    days = [date.fromisoformat(value) for value in
+            (row['first'] if row else None, row['last'] if row else None) if value]
+    earliest = min([*days, current])
+    latest = max([*days, current])
+    return {'first': _week_start(earliest).isoformat(), 'last': _week_start(latest).isoformat(),
+            'current': current.isoformat()}
+
+
+def overview(month=None, now=None, week=None):
     now = system_clock.now() if now is None else now
     rules = duty_settings.load()
     first, last = _month_bounds(month or now.strftime('%Y-%m'))
-    week_start = now.date() - timedelta(days=now.weekday())
+    week_start = parse_week(week, now)
     week_end = week_start + timedelta(days=6)
     range_start = min(first, week_start)
     range_end = max(last, week_end)
@@ -155,6 +187,7 @@ def overview(month=None, now=None):
             'weekday': current.weekday(),
             'shifts': _range_items(all_items, current),
         })
+    span = week_span(now=now)
     return {
         'month': first.strftime('%Y-%m'),
         'today': now.date().isoformat(),
@@ -167,7 +200,13 @@ def overview(month=None, now=None):
             'rate': round(normal / total * 100, 1) if total else None,
         },
         'timeline': timeline,
-        'week': {'start': week_start.isoformat(), 'end': week_end.isoformat(), 'days': days},
+        'week': {'start': week_start.isoformat(), 'end': week_end.isoformat(), 'days': days,
+                 'current': span['current'], 'first': span['first'], 'last': span['last'],
+                 # Navigation targets, so the client never has to parse dates.
+                 'previous': (week_start - timedelta(days=7)).isoformat()
+                 if week_start > date.fromisoformat(span['first']) else None,
+                 'next': (week_start + timedelta(days=7)).isoformat()
+                 if week_start < date.fromisoformat(span['last']) else None},
     }
 
 

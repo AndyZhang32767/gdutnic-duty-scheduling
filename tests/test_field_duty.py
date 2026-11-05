@@ -109,3 +109,60 @@ class TestFieldDuty(unittest.TestCase):
         field_duty.set_participation('王五', True, month='2026-11')
         assert field_duty.member_status('王五', month='2026-11')['status'] == field_duty.CONFIRMED
         assert field_duty.overview(month='2026-11')['registered'] == 1
+
+
+class TestFieldDutyMonthNavigation(unittest.TestCase):
+    setUp = test_schedule.ScheduleTest.setUp
+    tearDown = test_schedule.ScheduleTest.tearDown
+
+    def test_current_month_is_the_default_bound(self):
+        from unittest.mock import patch
+        from server import system_clock
+        with patch.object(system_clock, 'now', return_value=datetime(2026, 11, 5, 12, 0,
+                                                                     tzinfo=schedule_store.TZ)):
+            field_duty.register('张三')
+            data = field_duty.overview()
+        assert data['month'] == '2026-11' and data['current'] == '2026-11'
+
+    def test_records_extend_the_browsable_range(self):
+        from unittest.mock import patch
+        from server import system_clock
+        field_duty.register('张三', month='2026-09')
+        field_duty.confirm('张三', month='2026-09')
+        field_duty.register('李四', month='2027-01')
+        with patch.object(system_clock, 'now', return_value=datetime(2026, 11, 5, 12, 0,
+                                                                     tzinfo=schedule_store.TZ)):
+            october = field_duty.overview(month='2026-10')
+        assert october['first'] == '2026-09' and october['last'] == '2027-01'
+        assert october['previous'] == '2026-09'
+        assert october['next'] == '2026-11'
+
+    def test_arrows_disable_at_the_recorded_bounds(self):
+        from unittest.mock import patch
+        from server import system_clock
+        field_duty.register('张三', month='2026-10')
+        field_duty.register('李四', month='2026-12')
+        with patch.object(system_clock, 'now', return_value=datetime(2026, 11, 5, 12, 0,
+                                                                     tzinfo=schedule_store.TZ)):
+            start = field_duty.overview(month='2026-10')
+            end = field_duty.overview(month='2026-12')
+        assert start['previous'] is None and start['next'] == '2026-11'
+        assert end['next'] is None and end['previous'] == '2026-11'
+
+    def test_current_month_is_always_reachable(self):
+        from unittest.mock import patch
+        from server import system_clock
+        field_duty.register('张三', month='2026-06')
+        field_duty.confirm('张三', month='2026-06')
+        with patch.object(system_clock, 'now', return_value=datetime(2026, 11, 5, 12, 0,
+                                                                     tzinfo=schedule_store.TZ)):
+            data = field_duty.overview(month='2026-06')
+            later = field_duty.overview(month='2026-11')
+        assert data['first'] == '2026-06' and data['last'] == '2026-11'
+        assert later['next'] is None
+        assert later['previous'] == '2026-10'
+
+    def test_month_stepping_crosses_year_boundaries(self):
+        assert field_duty._shift_month('2026-01', -1) == '2025-12'
+        assert field_duty._shift_month('2026-12', 1) == '2027-01'
+        assert field_duty._shift_month('2026-06', -18) == '2024-12'

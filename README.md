@@ -45,8 +45,13 @@ gdutnic-outline-assistant/
 │   └── styles.css / schedule.css  Material You 样式
 ├── sql/mysql_schema.sql    MySQL 建表语句
 ├── tests/                  Python 与 Node 测试
-├── icon/                   站点图标
+├── icon/                   站点与界面图标（components/ 为组件 SVG，symbol/ 为原有图标）
+├── parment/svg/            MDI 图标原件库；新增图标先从这里拷到 icon/components/ 再引用
 ├── data/                   运行时数据（不提交）
+│   ├── .env                数据库凭证与运行配置
+│   ├── mysql/              本地 MySQL 文件
+│   ├── mysql-config/       本地 MySQL 配置
+│   ├── logs/               运行日志
 │   ├── session_secret.txt  会话签名密钥
 │   ├── weekly_roster.json  每周名单种子
 │   └── imports/            排班表与 CSV 模板
@@ -59,8 +64,9 @@ gdutnic-outline-assistant/
 ### 启动与首次配置
 
 ```bash
-cp .env.example .env          # 填写 MYSQL_* 等参数
-docker compose up -d mysql    # 使用本地 Docker MySQL
+python3 -m server.init_data   # Windows 可用 python；无需先安装依赖
+# 自动生成 data/.env 和随机数据库密码；远程数据库请编辑 data/.env
+docker compose --env-file data/.env up -d --wait mysql
 ./start.sh                    # Windows 用 start.bat
 ```
 
@@ -78,6 +84,7 @@ docker compose up -d mysql    # 使用本地 Docker MySQL
 
 - 右上角选择月份，查看出勤率、迟到数、旷班数。
 - 时间轴显示当前值班与人员姓名；下方周历按班次行横向对齐。
+- **周排班翻页**：周历两侧的箭头查看上一周 / 下一周，范围覆盖有排班的最早到最晚一周；到边界时对应箭头变灰禁用，中间没有排班的周仍可翻到。翻到其他周时标题变为「周排班」，并出现「回到本周」。
 - 点击本周卡片打开详情，再点击某个人名可改判考勤状态。
 - **查看日志**：记录管理员与值班账号的操作，按时间倒序显示时间、操作账号、操作内容，可按账号筛选或搜索关键字。覆盖登录、账号增删改、权限与密码变更、排班/特殊排班/每周模板/生成排班/清除排班、调班、考勤与外勤改判、值班签到、外勤登记与确认、系统时间与值班时间设置。
 - **异常统计**（在本周排班下方）：可切换「近 2 周 / 近 4 周」，左右两栏用横向柱状图列出迟到与旷班次数排行，柱右侧标注次数；次数相同按姓名拼音排序。历史不足所选周数时，统计窗口内已有的全部记录。
@@ -105,7 +112,8 @@ docker compose up -d mysql    # 使用本地 Docker MySQL
 
 ### 外勤管理（管理员）
 
-- 选择月份查看参与情况，点击人员卡片切换已参加/未参加。
+- 翻页查看各月参与情况，点击人员卡片切换已参加/未参加。
+- **月份翻页**：与概览的周排班一致，标题行右侧用箭头查看上个月 / 下个月，范围覆盖有外勤记录的最早到最晚月份（本月始终在范围内）；到边界时对应箭头变灰禁用。离开本月后出现「回到本月」。
 - **只统计已确认（状态 2）的外勤**；自己登记但未确认的记录不计入。
 - 管理员修改的条目会显示「管理员修改」。
 
@@ -150,7 +158,7 @@ docker compose up -d mysql    # 使用本地 Docker MySQL
 
 ## 配置
 
-复制 `.env.example` 为 `.env` 并填写，环境变量优先于 `.env`：
+运行 `python3 -m server.init_data` 会创建 `data/.env`，按 `.env.example` 生成配置并随机生成两份独立的数据库密码。使用远程数据库时编辑 `data/.env`。环境变量优先于此文件。旧根目录 `.env` 会自动迁移；两处配置不一致时停止并提示合并，不覆盖配置。
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
@@ -164,18 +172,19 @@ docker compose up -d mysql    # 使用本地 Docker MySQL
 | `SESSION_SECRET` | 会话签名密钥（可选，缺省写入 `data/session_secret.txt`） | — |
 | `SESSION_HTTPS_ONLY` | 设为 `1/true/yes` 时 Cookie 仅经 HTTPS 发送并启用 HSTS | 关闭 |
 
-请事先创建数据库并授予应用账号建表与读写权限；应用启动时会自动建表并补齐新增字段，不会覆盖旧数据。
+本地 Docker 在空的 `data/mysql/` 中自动创建数据库和账号；远程 MySQL 请事先创建数据库并授予应用账号建表与读写权限；应用启动时会自动建表并补齐新增字段，不会覆盖旧数据。
 
 ## 启动
 
 使用本地 Docker MySQL：
 
 ```bash
-docker compose up -d mysql
+python3 -m server.init_data
+docker compose --env-file data/.env up -d --wait mysql
 ./start.sh
 ```
 
-Windows 使用 `start.bat`。启动脚本会创建项目内 `.venv`、安装依赖（默认 PyPI 失败时自动尝试国内镜像），然后监听 `0.0.0.0:50025`。
+Windows 使用 `start.bat`。启动脚本会创建项目内 `.venv`、安装依赖（默认 PyPI 失败时自动尝试国内镜像），初始化 `data/` 并读取 `data/.env`，然后监听 `0.0.0.0:50025`。手动运行 uvicorn 或维护命令也会初始化目录。初始化不会重置现有数据库、密码或配置。
 
 手动启动：
 
@@ -202,13 +211,19 @@ python -m uvicorn server.app:app --host 0.0.0.0 --port 50025
 
 ## 数据与备份
 
-- **业务数据**保存在 MySQL（Docker 部署时为命名卷 `mysql_data`，容器内 `/var/lib/mysql`）。
+- **业务数据**保存在 MySQL；本地 Docker 将 `data/mysql/` 挂载到容器 `/var/lib/mysql`，不再使用命名卷。已有命名卷部署应先导出 SQL 到 `data/backups/`，启动新的空库后导入；不要直接复制运行中的 MySQL 文件。
 - 项目 `data/` 保存运行时文件，**不提交到 Git**：
+  - `.env`：数据库凭证与本地配置；
+  - `mysql/`：本地 MySQL 数据、证书与日志；
+  - `mysql-config/runtime.cnf`：按本地文件系统大小写规则生成的 MySQL 配置；
+  - `logs/`：QQ 机器人等运行日志；
   - `session_secret.txt`：会话签名密钥；
   - `weekly_roster.json`：每周名单种子（仅在没有已保存模板时读取）；
   - `imports/`：排班表与 CSV 模板等导入文件；
   - `app.sqlite`、`backups/`：旧版 SQLite 与迁移备份。
-- 备份建议直接对 MySQL 做逻辑备份（如 `mysqldump`），或备份 Docker 卷。
+- 首次初始化创建 `data/`、配置及 `mysql/`、`mysql-config/`、`imports/`、`backups/`、`logs/`、`certs/` 子目录。SQLite 表和会话密钥按需创建；不生成包含真实人员的种子名单。
+- SQL 导出统一放在 `data/backups/`，证书放在 `data/certs/`。`MYSQL_SSL_CA` 的相对路径相对于 `data/`。备份 MySQL 使用逻辑备份（如 `mysqldump`），或停库后备份 `data/mysql/`。
+- `sql/mysql_schema.sql` 只有建表结构，保留在源码中；`.env.example` 只有占位配置。Git 忽略整个 `data/`，并额外忽略数据库文件、SQL 导出、私钥、证书及人员表格，防止误放到其他目录后被提交。
 
 ## 从 SQLite 迁移
 
@@ -232,7 +247,7 @@ RUN_MYSQL_TESTS=1 .venv/bin/python -m unittest discover -s tests -v
 node --test tests/*.cjs
 ```
 
-MySQL 集成测试使用 `.env` 中的本地服务与 root 凭证，每个用例创建独立临时库并在结束时删除，不修改业务库。
+MySQL 集成测试使用 `data/.env` 中的本地服务与 root 凭证，每个用例创建独立临时库并在结束时删除，不修改业务库。
 
 ## 安全
 

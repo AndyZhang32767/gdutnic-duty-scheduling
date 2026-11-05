@@ -113,3 +113,73 @@ class TestOverview(unittest.TestCase):
             overview.set_member_status(sid, '甲', 'pending')
         with self.assertRaises(LookupError):
             overview.set_member_status(sid, '不存在', 'late')
+
+
+class TestOverviewWeekNavigation(unittest.TestCase):
+    setUp = test_schedule.ScheduleTest.setUp
+    tearDown = test_schedule.ScheduleTest.tearDown
+
+    def make(self, day, start='09:00', end='10:00', names=('甲',)):
+        return schedule_store.save(dict(day=day, start=start, end=end, members=list(names)))
+
+    def test_current_week_is_the_anchor_by_default(self):
+        self.make('2026-11-04')
+        now = datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ)
+        week = overview.overview('2026-11', now=now)['week']
+        assert week['start'] == '2026-11-02' and week['end'] == '2026-11-08'
+        assert week['current'] == '2026-11-02'
+
+    def test_previous_and_next_follow_the_requested_week(self):
+        self.make('2026-10-21')
+        self.make('2026-11-04')
+        self.make('2026-11-18')
+        now = datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ)
+        back = overview.overview('2026-11', now=now, week='2026-10-21')['week']
+        assert back['start'] == '2026-10-19'
+        assert back['previous'] is None                    # earliest recorded week
+        assert back['next'] == '2026-10-26'
+        assert [s['day'] for d in back['days'] for s in d['shifts']] == ['2026-10-21']
+        # Gap weeks are still reachable, up to the newest recorded week.
+        middle = overview.overview('2026-11', now=now, week='2026-10-28')['week']
+        assert middle['previous'] == '2026-10-19' and middle['next'] == '2026-11-02'
+
+    def test_any_day_in_the_week_anchors_the_same_board(self):
+        self.make('2026-11-04')
+        now = datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ)
+        for anchor in ('2026-11-02', '2026-11-04', '2026-11-08'):
+            week = overview.overview('2026-11', now=now, week=anchor)['week']
+            assert week['start'] == '2026-11-02', anchor
+            # The only shift is this week's, so it is both bound and the current week.
+            assert week['previous'] is None and week['next'] is None, anchor
+
+    def test_arrows_disable_at_the_recorded_bounds(self):
+        first = self.make('2026-11-04')
+        last = self.make('2026-11-18')
+        now = datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ)
+        earliest = overview.overview('2026-11', now=now, week='2026-11-04')['week']
+        assert earliest['first'] == '2026-11-02'
+        assert earliest['previous'] is None and earliest['next'] == '2026-11-09'
+        latest = overview.overview('2026-11', now=now, week='2026-11-18')['week']
+        assert latest['last'] == '2026-11-16'
+        assert latest['next'] is None and latest['previous'] == '2026-11-09'
+        assert first and last
+
+    def test_bounds_always_include_the_current_week(self):
+        # Every shift is in the past, yet this week stays reachable.
+        self.make('2026-10-07')
+        now = datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ)
+        week = overview.overview('2026-11', now=now)['week']
+        assert week['last'] == '2026-11-02'
+        assert week['next'] is None
+        assert week['previous'] == '2026-10-26'
+
+    def test_empty_schedule_disables_both_arrows(self):
+        now = datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ)
+        week = overview.overview('2026-11', now=now)['week']
+        assert week['previous'] is None and week['next'] is None
+        assert week['first'] == week['last'] == '2026-11-02'
+
+    def test_invalid_week_is_rejected(self):
+        with self.assertRaises(ValueError):
+            overview.overview('2026-11', now=datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ),
+                              week='not-a-day')

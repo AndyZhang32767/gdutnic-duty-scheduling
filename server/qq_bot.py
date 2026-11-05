@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any
 
-from server import admin_store, chat_store
+from server import admin_store, chat_store, db
 from server.chat import stream_chat, summarize_title
 from server.mcp_client import McpError, OutlineMcpClient, normalize_mcp_url
 
@@ -95,7 +95,11 @@ async def start(app_id: str, secret: str) -> None:
             await _handle_message("c2c", message)
 
     intents = botpy.Intents(public_messages=True)
-    client = WikiClient(intents=intents)
+    log_dir = db.DATA / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = dict(botpy.logging.DEFAULT_FILE_HANDLER,
+                   filename=str(log_dir / '%(name)s.log'))
+    client = WikiClient(intents=intents, ext_handlers=handler)
     _client = client
     _running = False
     _error = ""

@@ -1,5 +1,5 @@
 """Monthly field-duty (外勤) registrations, one record per member per month."""
-from datetime import datetime
+from datetime import date, datetime
 
 from server import db, schedule_store, system_clock
 
@@ -105,6 +105,20 @@ def pending(month=None):
             'items': [{'username': r['username'], 'registered_at': r['registered_at']} for r in rows]}
 
 
+def month_span(now=None):
+    """Months that hold a field-duty record, always including the current month.
+
+    The board's arrows stop at these bounds so the buttons can be disabled when
+    stepping further back or forward would show nothing new.
+    """
+    month = _month(now)
+    with db.read() as conn:
+        init(conn)
+        row = conn.execute('SELECT MIN(month) AS first, MAX(month) AS last FROM field_duty').fetchone()
+    months = [value for value in ((row['first'] if row else None), (row['last'] if row else None)) if value]
+    return {'first': min([*months, month]), 'last': max([*months, month]), 'current': month}
+
+
 def overview(month=None):
     """Every ordinary account with the month's registration state."""
     month = month or _month()
@@ -123,7 +137,18 @@ def overview(month=None):
               'manual': done[name][1] if name in done else False}
              for name in accounts]
     items.sort(key=lambda item: (not item['registered'], item['username']))
-    return {'month': month, 'registered': len(done), 'total': len(items), 'items': items}
+    span = month_span()
+    return {'month': month, 'registered': len(done), 'total': len(items), 'items': items,
+            'current': span['current'], 'first': span['first'], 'last': span['last'],
+            'previous': _shift_month(month, -1) if month > span['first'] else None,
+            'next': _shift_month(month, 1) if month < span['last'] else None}
+
+
+def _shift_month(month, delta):
+    """Move a `YYYY-MM` string by `delta` months."""
+    first = date(int(month[:4]), int(month[5:7]), 1)
+    total = first.year * 12 + first.month - 1 + delta
+    return f'{total // 12:04d}-{total % 12 + 1:02d}'
 
 
 def set_participation(username, registered, month=None):

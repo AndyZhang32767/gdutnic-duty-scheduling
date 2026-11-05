@@ -839,10 +839,10 @@ async def admin_anomalies(request: Request, weeks: int = 2):
 
 
 @app.get("/api/admin/overview")
-async def admin_overview(request: Request, month: str = ""):
+async def admin_overview(request: Request, month: str = "", week: str = ""):
     _require_permission(request, "schedule")
     try:
-        return overview.overview(month or None)
+        return overview.overview(month or None, week=week.strip() or None)
     except ValueError as exc:
         raise _schedule_error(exc) from exc
 

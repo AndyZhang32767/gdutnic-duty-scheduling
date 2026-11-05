@@ -2,6 +2,8 @@
 const WEEK_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const STATUS_TEXT = {normal:'正常', late:'迟到', absent:'旷班', pending:'待签到'};
 let overviewData = null, overviewToken = 0;
+// Anchor for the week board: any day inside the requested week, or null for this week.
+let overviewWeek = null;
 
 // 概览固定显示本月；月份选择已从页面移除。
 const currentMonth = () => today().slice(0, 7);
@@ -30,9 +32,25 @@ function overviewCard(s) {
 }
 
 function renderWeek(week, today) {
+  // The server decides both bounds, so the arrows only enable where a week exists.
   $('weekRange').textContent = `${week.start} 至 ${week.end}`;
+  const isCurrent = week.start === week.current;
+  // The heading would be wrong while browsing another week.
+  $('weekTitle').textContent = isCurrent ? '本周排班' : '周排班';
+  $('weekToday').hidden = isCurrent;
+  const prev = $('weekPrev'), next = $('weekNext');
+  prev.disabled = !week.previous;
+  next.disabled = !week.next;
+  prev.title = week.previous ? `上一周（${week.previous} 起）` : '已到最早一周';
+  next.title = week.next ? `下一周（${week.next} 起）` : '已到最晚一周';
   const board = $('weekBoard');
   board.replaceChildren();
+  // A week with no shifts says so instead of rendering an empty seven-column grid.
+  if (!week.days.some(day => day.shifts.length)) {
+    board.append(el('p', 'hint week-empty',
+      isCurrent ? '本周暂无排班。' : `${week.start} 至 ${week.end} 没有排班。`));
+    return;
+  }
   // One grid row per shift index keeps Monday–Sunday cards aligned horizontally.
   const rows = Math.max(1, ...week.days.map(d => d.shifts.length));
   const boardHead = el('div', 'week-row week-head-row');
@@ -90,8 +108,10 @@ function editAttendance(shift, member) {
       await api('/api/admin/overview/attendance', 'PUT',
         {shift_id: shift.id, name: member.name, status});
       await loadOverview();
-      // Reopen the refreshed shift so the dialog shows the new status.
-      const fresh = overviewData && overviewData.timeline.find(item => item.id === shift.id);
+      // Reopen the refreshed shift so the dialog shows the new status. The board may
+      // be showing any week, so look there as well as in today's timeline.
+      const fresh = overviewData && (overviewData.timeline.find(item => item.id === shift.id)
+        || overviewData.week.days.flatMap(day => day.shifts).find(item => item.id === shift.id));
       if (fresh) openDetail(fresh);
       $('status').textContent = `已将「${member.name}」的考勤状态改为${STATUS_TEXT[status]}。`;
     },
@@ -103,14 +123,27 @@ async function loadOverview() {
   const token = ++overviewToken;
   $('status').textContent = '正在加载概览…';
   try {
-    const data = await api('/api/admin/overview?month=' + encodeURIComponent(month));
+    const query = '/api/admin/overview?month=' + encodeURIComponent(month)
+      + (overviewWeek ? '&week=' + encodeURIComponent(overviewWeek) : '');
+    const data = await api(query);
     if (token !== overviewToken) return;
     overviewData = data;
+    // Track the week the server actually rendered; it is authoritative.
+    overviewWeek = data.week.start === data.week.current ? null : data.week.start;
     renderOverview();
     $('status').textContent = '';
   } catch (err) {
     if (token === overviewToken) $('status').textContent = err.message;
   }
+}
+
+// Step one week back or forward; the buttons are disabled at the bounds.
+async function shiftWeek(direction) {
+  const week = overviewData?.week;
+  const target = direction < 0 ? week?.previous : week?.next;
+  if (!target) return;
+  overviewWeek = target;
+  await loadOverview();
 }
 
 function renderOverview() {
@@ -155,6 +188,9 @@ function applyPermissions(granted) {
 function initOverview() {
   // 月份固定为本月，无需选择控件。
   $('refresh').onclick = loadOverview;
+  $('weekPrev').onclick = () => shiftWeek(-1);
+  $('weekNext').onclick = () => shiftWeek(1);
+  $('weekToday').onclick = () => { overviewWeek = null; loadOverview(); };
   $('closeDetail').onclick = () => $('detailDialog').close();
   window.loadOverview = loadOverview;
   window.applyPermissions = applyPermissions;
