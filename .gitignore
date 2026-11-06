@@ -17,6 +17,7 @@ Thumbs.db
 .idea/
 .vscode/
 parment/
+output/
 
 !.env.example
 # Runtime data and imported rosters never belong in the repository.

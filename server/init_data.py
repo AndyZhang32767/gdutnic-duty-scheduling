@@ -31,6 +31,10 @@ def initialize(root: Path = ROOT) -> Path:
     env.chmod(0o600)
     for name in ('imports', 'backups', 'logs', 'mysql', 'certs'):
         (data / name).mkdir(exist_ok=True)
+    # The 原始管理员's credentials live in this one file, never in the database.
+    root_file = data / 'root_admin.json'
+    if root_file.exists():
+        root_file.chmod(0o600)
     # MySQL must agree with the host filesystem's case sensitivity, including on macOS.
     config_dir = data / 'mysql-config'
     config_dir.mkdir(exist_ok=True)

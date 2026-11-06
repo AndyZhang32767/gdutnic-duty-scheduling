@@ -106,6 +106,8 @@ class TestFieldDuty(unittest.TestCase):
         assert field_duty.register('张三', month='2026-11')['status'] == field_duty.PENDING
 
     def test_admin_override_marks_confirmed(self):
+        from server import member_store
+        member_store.create_missing(['王五'])
         field_duty.set_participation('王五', True, month='2026-11')
         assert field_duty.member_status('王五', month='2026-11')['status'] == field_duty.CONFIRMED
         assert field_duty.overview(month='2026-11')['registered'] == 1
@@ -166,3 +168,64 @@ class TestFieldDutyMonthNavigation(unittest.TestCase):
         assert field_duty._shift_month('2026-01', -1) == '2025-12'
         assert field_duty._shift_month('2026-12', 1) == '2027-01'
         assert field_duty._shift_month('2026-06', -18) == '2024-12'
+
+
+class TestFieldDutyMonthOperations(unittest.TestCase):
+    setUp = test_schedule.ScheduleTest.setUp
+    tearDown = test_schedule.ScheduleTest.tearDown
+
+    def test_month_summary_counts_each_status(self):
+        from server import member_store
+        member_store.create_missing(['张三', '李四', '王五'])
+        field_duty.register('张三', month='2026-11')
+        field_duty.confirm('张三', month='2026-11')
+        field_duty.register('李四', month='2026-11')
+        summary = field_duty.month_summary('2026-11')
+        assert summary['month'] == '2026-11'
+        assert summary['registered'] == 2
+        assert summary['confirmed'] == 1
+        assert summary['pending'] == 1
+        assert summary['total'] >= 3
+
+    def test_clear_month_only_removes_that_month(self):
+        field_duty.register('张三', month='2026-10')
+        field_duty.register('张三', month='2026-11')
+        field_duty.confirm('张三', month='2026-11')
+        result = field_duty.clear_month('2026-11')
+        assert result['deleted'] == 1
+        assert result['month'] == '2026-11'
+        assert field_duty.member_status('张三', month='2026-11')['status'] == field_duty.NONE
+        assert field_duty.member_status('张三', month='2026-10')['status'] == field_duty.PENDING
+
+    def test_clear_month_on_empty_month_is_safe(self):
+        result = field_duty.clear_month('2026-11')
+        assert result['deleted'] == 0 and result['confirmed'] == 0
+        assert field_duty.overview(month='2026-11')['registered'] == 0
+
+    def test_pending_only_month_is_still_deletable(self):
+        field_duty.register('张三', month='2026-11')
+        data = field_duty.overview(month='2026-11')
+        # Nobody confirmed, so the board counts zero, but a row exists to remove.
+        assert data['registered'] == 0
+        assert data['stored'] == 1 and data['pending'] == 1
+        assert field_duty.clear_month('2026-11')['deleted'] == 1
+        assert field_duty.overview(month='2026-11')['stored'] == 0
+
+    def test_admin_board_requires_member_field_access_and_follows_group_changes(self):
+        from server import member_store, permissions
+        member_store.create_missing(['有外勤入口', '仅管理端外勤', '已撤销权限'])
+        permissions.set_permissions('仅管理端外勤', ['field'])
+        permissions.set_permissions('已撤销权限', ['duty'])
+        field_duty.set_participation('已撤销权限', True, month='2026-11')
+        field_duty.set_participation('有外勤入口', True, month='2026-11')
+        data = field_duty.overview('2026-11')
+        self.assertEqual([item['username'] for item in data['items']], ['有外勤入口'])
+        self.assertEqual((data['registered'], data['total']), (1, 1))
+        # Hidden accounts retain historical records; changing the group takes effect immediately.
+        self.assertTrue(field_duty.member_status('已撤销权限', '2026-11')['registered'])
+        permissions.set_permissions('已撤销权限', ['member_field'])
+        data = field_duty.overview('2026-11')
+        self.assertEqual((data['registered'], data['total']), (2, 2))
+        member_store.update('有外勤入口', active=False)
+        self.assertEqual(field_duty.overview('2026-11')['total'], 1)
+        self.assertEqual(field_duty.month_summary('2026-11')['total'], 1)

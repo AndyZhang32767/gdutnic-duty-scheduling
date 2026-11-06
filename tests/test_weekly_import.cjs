@@ -96,3 +96,30 @@ test('a GBK-encoded file is decoded instead of showing mojibake', async () => {
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0].days[0], ['张三']);
 });
+
+test('import maps shift labels to their slots when earlier rows are absent or reordered', async () => {
+  const {importRoster} = require('../web/weekly-import.js');
+  const inputs = new Map();
+  global.$ = id => {
+    if (!inputs.has(id)) inputs.set(id, {value: '旧人员'});
+    return inputs.get(id);
+  };
+  try {
+    for (const labels of [['第2班'], ['第四班', '2'], ['第1班', '第2班']]) {
+      const text = [header, ...labels.map(label => `${label},${label === '第1班' ? '' : '乙'},,,,,,`)].join('\r\n');
+      const buffer = new TextEncoder().encode(text);
+      await importRoster({arrayBuffer: async () => buffer.buffer});
+      assert.equal(inputs.get('weekly-members-0-0').value, '');
+      assert.equal(inputs.get('weekly-members-1-0').value, '乙');
+      assert.equal(inputs.get('weekly-members-2-0').value, '');
+      assert.equal(inputs.get('weekly-members-3-0').value, labels.includes('第四班') ? '乙' : '');
+    }
+  } finally {
+    delete global.$;
+  }
+});
+
+test('duplicate and out-of-range shift numbers are rejected', () => {
+  assert.throws(() => rosterFromCsv(`${header}\n第2班,甲\n第二班,乙`), /重复/);
+  assert.throws(() => rosterFromCsv(`${header}\n5,甲`), /仅支持/);
+});

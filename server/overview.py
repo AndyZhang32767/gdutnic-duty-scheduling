@@ -131,7 +131,9 @@ def overview(month=None, now=None, week=None):
     with db.read() as conn:
         schedule_store.init(conn)
         rows = conn.execute(
-            'SELECT * FROM shifts WHERE day>=? AND day<=? ORDER BY day,start,id',
+            'SELECT s.*,w.slot AS weekly_slot FROM shifts s '
+            'LEFT JOIN weekly_instances w ON w.shift_id=s.id '
+            'WHERE s.day>=? AND s.day<=? ORDER BY s.day,s.start,s.id',
             (range_start.isoformat(), range_end.isoformat())).fetchall()
         attendance = _attendance_by_shift(conn, rows)
         for row in rows:
@@ -206,7 +208,12 @@ def overview(month=None, now=None, week=None):
                  'previous': (week_start - timedelta(days=7)).isoformat()
                  if week_start > date.fromisoformat(span['first']) else None,
                  'next': (week_start + timedelta(days=7)).isoformat()
-                 if week_start < date.fromisoformat(span['last']) else None},
+                 if week_start < date.fromisoformat(span['last']) else None,
+                 # Totals for the delete confirmation; the client never counts rows itself.
+                 'shifts': sum(len(day['shifts']) for day in days),
+                 'people': sum(len(shift['members']) for day in days for shift in day['shifts']),
+                 'checked': sum(1 for day in days for shift in day['shifts']
+                                for member in shift['members'] if member['checked_at'])},
     }
 
 
@@ -286,3 +293,32 @@ def set_member_status(shift_id, name, status):
         conn.execute('UPDATE attendance SET status_override=? WHERE shift_id=? AND name=?',
                      (status, shift_id, name))
     return {'shift_id': shift_id, 'name': name, 'status': status}
+
+
+def member_schedule_week(week=None):
+    """Public roster details for signed-in members; never return attendance data."""
+    now = system_clock.now()
+    start = parse_week(week, now)
+    end = start + timedelta(days=6)
+    span = week_span(now)
+    with db.read() as conn:
+        rows = [dict(row) for row in conn.execute(
+            'SELECT s.id,s.day,s.start,s.end,s.location,s.note,s.special,w.slot AS weekly_slot '
+            'FROM shifts s LEFT JOIN weekly_instances w ON w.shift_id=s.id '
+            'WHERE s.day>=? AND s.day<=? ORDER BY s.day,s.start,s.id',
+            (start.isoformat(), end.isoformat()))]
+        names = {}
+        if rows:
+            ids = [row['id'] for row in rows]
+            placeholders = ','.join('?' for _ in ids)
+            for row in conn.execute(
+                    f'SELECT shift_id,name FROM attendance WHERE shift_id IN ({placeholders}) ORDER BY name', ids):
+                names.setdefault(row['shift_id'], []).append(row['name'])
+        for row in rows:
+            row['members'] = names.get(row['id'], [])
+    return {'start': start.isoformat(), 'end': end.isoformat(), 'current': span['current'],
+            'previous': (start - timedelta(days=7)).isoformat() if start.isoformat() > span['first'] else None,
+            'next': (start + timedelta(days=7)).isoformat() if start.isoformat() < span['last'] else None,
+            'days': [{'day': (start + timedelta(days=i)).isoformat(), 'weekday': i,
+                      'shifts': [row for row in rows if row['day'] == (start + timedelta(days=i)).isoformat()]}
+                     for i in range(7)]}

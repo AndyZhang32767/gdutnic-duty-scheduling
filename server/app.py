@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from contextlib import suppress
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -13,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
-from server import admin_store, chat_store, db, duty_settings, field_duty, operation_log, overview, permissions, schedule_store, swap_store, system_clock, weekly_store, member_store, security
+from server import admin_store, chat_store, data_admin, db, duty_settings, field_duty, mailer, operation_log, overview, permissions, push_reports, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
 from server.mcp_client import McpError, OutlineMcpClient, normalize_mcp_url
 from server.oauth import exchange_code, start_oauth
 
@@ -49,6 +51,7 @@ def _chat_helpers():
     return chat
 
 
+@asynccontextmanager
 async def lifespan(_app: FastAPI):
     admin_store.load()
     permissions.ensure_defaults()
@@ -58,6 +61,12 @@ async def lifespan(_app: FastAPI):
     result = member_store.provision()
     print(f"[members] 新建普通用户账号 {result['created']} 个，保留现有账号 {result['existing']} 个")
     slug = admin_store.path()
+    # An installed site that predates the root account gets one on this boot.
+    if admin_store.has_user() and not root_admin.exists():
+        generated = root_admin.bootstrap_existing()
+        if generated:
+            print("[root] 已创建原始管理员；一次性初始密码：" + generated)
+            print("[root] 请用它登录后在「其他设置 → 原始管理员密码」中修改。")
     print("")
     print(f"管理员界面: http://127.0.0.1:50025/{slug}")
     if not admin_store.has_user():
@@ -65,7 +74,13 @@ async def lifespan(_app: FastAPI):
     print("")
     if admin_store.qq_config().get('enabled'):
         await _qq_bot().sync()
-    yield
+    push_task = asyncio.create_task(push_reports.worker())
+    try:
+        yield
+    finally:
+        push_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await push_task
     if admin_store.qq_config().get('enabled'):
         await _qq_bot().stop()
 
@@ -115,6 +130,7 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
     return response
 
+
 VISITOR_COOKIE = "gdutnic_visitor"
 ADMIN_COOKIE = "gdutnic_admin"
 
@@ -149,7 +165,7 @@ def _admin_from_cookie(request: Request) -> str:
     except (BadSignature, Exception):
         return ""
     name = str(data.get("u") or "").strip()
-    if name and name in admin_store.usernames():
+    if name and (root_admin.is_root(name) or name in admin_store.usernames()):
         return name
     return ""
 
@@ -173,6 +189,7 @@ def _with_visitor_cookie(request: Request, payload: dict[str, Any], visitor: str
             path="/",
         )
     return response
+
 
 app.mount("/static", NoCacheStatic(directory=WEB), name="static")
 ICON.mkdir(parents=True, exist_ok=True)
@@ -557,6 +574,12 @@ def _require_permission(request: Request, permission: str) -> str:
     return name
 
 
+def _reject_root(name: str) -> None:
+    """The 原始管理员 is managed only through its own file, never these endpoints."""
+    if root_admin.is_root(name):
+        raise HTTPException(status_code=403, detail="原始管理员不可在此修改，只能修改其密码")
+
+
 def _may_manage(target: str, actor: str) -> bool:
     """Without the grant permission, an account cannot touch a privileged account.
 
@@ -565,7 +588,7 @@ def _may_manage(target: str, actor: str) -> bool:
     """
     if target == actor:
         return True
-    if permissions.has(actor, "accounts_protected"):
+    if permissions.has(actor, "members"):
         return True
     return not permissions.is_admin(target)
 
@@ -592,6 +615,7 @@ async def admin_status(request: Request) -> dict[str, Any]:
     return {
         "setup": admin_store.has_user(),
         "logged_in": bool(name),
+        "root": bool(name and root_admin.is_root(name)),
         "gate": _admin_gate(request),
         "username": name or _admin_username(request) if name else "",
         "permissions": sorted(permissions.permissions_of(name)) if name else [],
@@ -607,20 +631,22 @@ async def admin_register(request: Request) -> dict[str, Any]:
     if admin_store.has_user():
         raise HTTPException(status_code=409, detail="管理员已注册，请直接登录")
     body = await request.json()
-    username = str(body.get("username") or "").strip()
+    # The first account is the 原始管理员; its name is fixed and its credentials live in
+    # data/root_admin.json rather than the database.
     password = str(body.get("password") or "")
     try:
-        # The first administrator is an ordinary account granted every permission.
-        member_store.create(username, password)
-        permissions.set_permissions(username, permissions.ADMIN_DEFAULTS)
-        admin_store.remember_setup(username)
+        if len(password) < 6:
+            raise ValueError("密码至少 6 位")
+        root_admin.create_if_missing(password)
+        admin_store.remember_setup(root_admin.username())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    username = root_admin.username()
     request.session["admin_ok"] = True
-    request.session["admin_username"] = str(body.get("username") or "").strip()
-    _log(request.session["admin_username"], '创建管理员账号', '首次注册并获得全部权限')
-    response = JSONResponse({"ok": True, "username": request.session["admin_username"]})
-    _set_admin_cookie(response, request.session["admin_username"])
+    request.session["admin_username"] = username
+    _log(username, '创建原始管理员', '首次注册，凭据保存于 data/root_admin.json')
+    response = JSONResponse({"ok": True, "username": username})
+    _set_admin_cookie(response, username)
     return response
 
 
@@ -634,6 +660,18 @@ async def admin_login(request: Request) -> JSONResponse:
     body = await request.json()
     username = str(body.get("username") or "").strip()
     password = str(body.get("password") or "")
+    # The 原始管理员 authenticates against its own file, never the account table.
+    if root_admin.is_root(username):
+        if not root_admin.verify(password):
+            ADMIN_LIMITER.fail(key)
+            raise HTTPException(status_code=401, detail="用户名或密码不正确")
+        ADMIN_LIMITER.reset(key)
+        _log(username, '登录管理端')
+        request.session["admin_ok"] = True
+        request.session["admin_username"] = username
+        response = JSONResponse({"ok": True, "username": username})
+        _set_admin_cookie(response, username)
+        return response
     version = member_store.authenticate(username, password)
     if not version:
         ADMIN_LIMITER.fail(key)
@@ -663,13 +701,13 @@ async def admin_logout(request: Request) -> JSONResponse:
 
 @app.get("/api/admin/users")
 async def admin_list_users(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "members")
     return {"usernames": admin_store.usernames()}
 
 
 @app.post("/api/admin/users")
 async def admin_add_user(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "members")
     body = await request.json()
     try:
         admin_store.add_user(str(body.get("username") or ""), str(body.get("password") or ""))
@@ -681,7 +719,7 @@ async def admin_add_user(request: Request) -> dict[str, Any]:
 
 @app.patch("/api/admin/users")
 async def admin_update_user(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "members")
     body = await request.json()
     old = str(body.get("old_username") or "").strip()
     if old and old == str(request.session.get("admin_username") or ""):
@@ -696,7 +734,7 @@ async def admin_update_user(request: Request) -> dict[str, Any]:
 
 @app.delete("/api/admin/users")
 async def admin_delete_user(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "members")
     body = await request.json()
     name = str(body.get("username") or "").strip()
     try:
@@ -709,33 +747,33 @@ async def admin_delete_user(request: Request) -> dict[str, Any]:
 
 @app.get("/api/admin/model")
 async def admin_model_get(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     return admin_store.model_public()
 
 
 @app.post("/api/admin/model")
 async def admin_model_save(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     body = await request.json()
     return admin_store.save_model(body)
 
 
 @app.get("/api/admin/mcp")
 async def admin_mcp_get(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     return admin_store.mcp_public()
 
 
 @app.post("/api/admin/mcp")
 async def admin_mcp_save(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     body = await request.json()
     return admin_store.save_mcp(body)
 
 
 @app.post("/api/admin/oauth")
 async def admin_oauth_persist(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     token = str(request.session.get("outline_token") or "").strip()
     refresh = str(request.session.get("outline_refresh") or "").strip()
     meta = request.session.get("oauth_meta") if isinstance(request.session.get("oauth_meta"), dict) else {}
@@ -757,19 +795,56 @@ async def admin_oauth_persist(request: Request) -> dict[str, Any]:
 
 @app.post("/api/admin/oauth/logout")
 async def admin_oauth_logout(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     return admin_store.clear_oauth()
+
+
+@app.get("/api/admin/smtp")
+async def admin_smtp_get(request: Request) -> dict[str, Any]:
+    _require_permission(request, "smtp")
+    return admin_store.smtp_public()
+
+
+@app.post("/api/admin/smtp")
+async def admin_smtp_save(request: Request) -> dict[str, Any]:
+    _require_permission(request, "smtp")
+    body = await request.json()
+    try:
+        result = admin_store.save_smtp(body)
+        _log(_admin_username(request), '修改 SMTP 设置',
+             f"{result['host'] or '(未设置)'}:{result['port']} · "
+             f"{'启用' if result['enabled'] else '停用'}")
+        return result
+    except ValueError as exc:
+        raise _schedule_error(exc) from exc
+
+
+@app.post("/api/admin/smtp/test")
+async def admin_smtp_test(request: Request) -> dict[str, Any]:
+    """Send one test message to an address the operator types; nothing is stored."""
+    _require_permission(request, "smtp")
+    body = await request.json()
+    to = str(body.get("to") or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="请填写收件邮箱")
+    try:
+        result = mailer.send_test(to)
+    except (RuntimeError, ValueError) as exc:
+        _log(_admin_username(request), 'SMTP 测试失败', f"{to}：{exc}")
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), 'SMTP 测试成功', to)
+    return result
 
 
 @app.get("/api/admin/qq")
 async def admin_qq_get(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     return _qq_bot().public_status()
 
 
 @app.post("/api/admin/qq")
 async def admin_qq_save(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "settings")
     body = await request.json()
     admin_store.save_qq(body)
     return await _qq_bot().sync()
@@ -793,13 +868,13 @@ async def chats_put(request: Request) -> JSONResponse:
 
 @app.get("/api/admin/chats")
 async def admin_chats_list(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "data")
     return {"items": chat_store.list_all(), **chat_store.stats()}
 
 
 @app.post("/api/admin/chats/cache")
 async def admin_chats_cache(request: Request) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "data")
     body = await request.json()
     try:
         max_mb = int(body.get("max_mb"))
@@ -811,7 +886,7 @@ async def admin_chats_cache(request: Request) -> dict[str, Any]:
 
 @app.get("/api/admin/chats/{visitor_id}/{chat_id}")
 async def admin_chats_detail(request: Request, visitor_id: str, chat_id: str) -> dict[str, Any]:
-    _require_admin(request)
+    _require_permission(request, "data")
     rec = chat_store.get_session(visitor_id, chat_id)
     if not rec:
         raise HTTPException(status_code=404, detail="对话不存在")
@@ -826,30 +901,119 @@ def _schedule_error(exc):
 
 @app.get("/api/admin/logs")
 async def admin_logs(request: Request, limit: int = 300, actor: str = "", q: str = ""):
-    _require_admin(request)
+    _require_permission(request, "logs")
     limit = max(1, min(int(limit or 300), 1000))
     return {"items": operation_log.list_entries(limit, actor.strip(), q.strip()),
             "actors": operation_log.actors()}
 
 
+@app.get("/api/admin/data/tables")
+async def admin_data_tables(request: Request):
+    """Table list for 数据管理; only the whitelisted tables are ever returned."""
+    _require_permission(request, "data")
+    return data_admin.list_tables()
+
+
+@app.get("/api/admin/data/tables/{name}")
+async def admin_data_preview(name: str, request: Request, page: int = 1, size: int = 50, q: str = ""):
+    _require_permission(request, "data")
+    try:
+        return data_admin.preview(name, page, size, q)
+    except LookupError as exc:
+        raise _schedule_error(exc) from exc
+    except (TypeError, ValueError) as exc:
+        raise _schedule_error(exc) from exc
+
+
+@app.put("/api/admin/data/tables/{name}")
+async def admin_data_update(name: str, request: Request):
+    _require_permission(request, "data")
+    body = await request.json()
+    try:
+        result = data_admin.update_row(name, body.get("keys") or {}, body.get("values") or {},
+                                       _admin_username(request))
+    except (TypeError, ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '修改数据表',
+         f"{name}：修改 {result['updated']} 行（{'、'.join(result['columns'])}）")
+    return result
+
+
+@app.post("/api/admin/data/tables/{name}/delete-many")
+async def admin_data_delete_many(name: str, request: Request):
+    """Delete the rows the administrator selected with click / shift-click."""
+    _require_permission(request, "data")
+    body = await request.json()
+    keys = body.get("keys")
+    if not isinstance(keys, list):
+        raise HTTPException(status_code=400, detail="请提供要删除的记录")
+    try:
+        result = data_admin.delete_many(name, keys, _admin_username(request))
+    except (TypeError, ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '批量删除数据行',
+         f"{name}：删除 {result['deleted']} 行（提交 {result['requested']} 行）")
+    return result
+
+
+@app.post("/api/admin/data/tables/{name}/delete-page")
+async def admin_data_delete_page(name: str, request: Request):
+    """Delete every row on one preview page, using the same filters as the preview."""
+    _require_permission(request, "data")
+    body = await request.json()
+    try:
+        result = data_admin.delete_page(
+            name, body.get("page") or 1, body.get("size") or 50,
+            str(body.get("q") or ""), _admin_username(request))
+    except (TypeError, ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '删除整页数据',
+         f"{name} 第 {body.get('page') or 1} 页：删除 {result['deleted']} 行")
+    return result
+
+
+@app.delete("/api/admin/data/tables/{name}")
+async def admin_data_delete(name: str, request: Request):
+    _require_permission(request, "data")
+    body = await request.json()
+    try:
+        result = data_admin.delete_row(name, body.get("keys") or {}, _admin_username(request))
+    except (TypeError, ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '删除数据行',
+         f"{name}：{'、'.join(f'{k}={v}' for k, v in (body.get('keys') or {}).items())}")
+    return result
+
+
 @app.get("/api/admin/anomalies")
 async def admin_anomalies(request: Request, weeks: int = 2):
-    _require_admin(request)
+    _require_permission(request, "overview")
     return overview.anomaly_stats(weeks)
 
 
 @app.get("/api/admin/overview")
 async def admin_overview(request: Request, month: str = "", week: str = ""):
-    _require_permission(request, "schedule")
+    _require_permission(request, "overview")
     try:
         return overview.overview(month or None, week=week.strip() or None)
     except ValueError as exc:
         raise _schedule_error(exc) from exc
 
 
+@app.get("/api/member/schedule-list")
+async def member_schedule_list(request: Request, week: str = ""):
+    _require_member_permission(request, "schedule_list")
+    try:
+        return overview.member_schedule_week(week or None)
+    except (ValueError, TypeError) as exc:
+        raise _schedule_error(exc) from exc
+
+
 @app.get("/api/schedules")
 async def schedules_get(request: Request, day: str):
-    name = None if _admin_ok(request) else _require_member(request)
+    name = None if _admin_ok(request) else _require_member_permission(request, "duty")
+    if name is None:
+        _require_permission(request, "overview")
     try:
         return {
             "items": schedule_store.list_day(day, name),
@@ -862,7 +1026,9 @@ async def schedules_get(request: Request, day: str):
 
 @app.get("/api/special-schedules")
 async def special_schedules_get(request: Request, from_day: str = ""):
-    name = None if _admin_ok(request) else _require_member(request)
+    name = None if _admin_ok(request) else _require_member_permission(request, "duty")
+    if name is None:
+        _require_permission(request, "special")
     try:
         return {"items": schedule_store.list_special(from_day or None, name)}
     except ValueError as exc:
@@ -871,13 +1037,13 @@ async def special_schedules_get(request: Request, from_day: str = ""):
 
 @app.get("/api/admin/clock")
 async def admin_clock_get(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "clock")
     return system_clock.public()
 
 
 @app.put("/api/admin/clock")
 async def admin_clock_save(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "clock")
     body = await request.json()
     try:
         state = system_clock.save(
@@ -893,13 +1059,13 @@ async def admin_clock_save(request: Request):
 
 @app.get("/api/admin/rules")
 async def admin_rules_get(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "rules")
     return duty_settings.load()
 
 
 @app.put("/api/admin/rules")
 async def admin_rules_save(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "rules")
     try:
         rules = duty_settings.save(await request.json())
         _log(_admin_username(request), '修改值班时间设置',
@@ -911,7 +1077,7 @@ async def admin_rules_save(request: Request):
 
 @app.post("/api/schedules/{shift_id}/check-in")
 async def schedule_check_in(shift_id: int, request: Request):
-    name = _require_member(request)
+    name = _require_member_permission(request, "duty")
     try:
         stamp, chained = schedule_store.check_in_with_chain(shift_id, name)
         _log(name, '到岗签到',
@@ -924,22 +1090,45 @@ async def schedule_check_in(shift_id: int, request: Request):
 
 @app.get("/api/admin/attendance-history")
 async def admin_attendance_history(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "overview")
     return {"items": schedule_store.history()}
 
 
 @app.delete("/api/admin/schedules")
 async def schedules_clear(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "weekly")
     result = schedule_store.clear_all()
     _log(_admin_username(request), '清除所有排班',
          f"删除 {result['deleted']} 个班次，归档 {result.get('archived', 0)} 条打卡")
     return result
 
 
+@app.get("/api/admin/schedules/week")
+async def schedules_week(request: Request, start: str = ""):
+    """Totals for one Monday–Sunday week, shown before deleting it."""
+    _require_permission(request, "overview")
+    try:
+        return schedule_store.week_summary(start)
+    except (TypeError, ValueError) as exc:
+        raise _schedule_error(exc) from exc
+
+
+@app.delete("/api/admin/schedules/week")
+async def schedules_week_clear(request: Request, start: str = ""):
+    _require_permission(request, "overview")
+    try:
+        result = schedule_store.clear_week(start)
+    except (TypeError, ValueError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '删除整周排班',
+         f"{result['week_start']} 至 {result['week_end']}：删除 {result['deleted']} 个班次，"
+         f"归档 {result['archived']} 条打卡")
+    return result
+
+
 @app.post("/api/admin/schedules")
 async def schedule_create(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "overview")
     try:
         body = await request.json()
         shift_id = schedule_store.save(body)
@@ -951,7 +1140,7 @@ async def schedule_create(request: Request):
 
 @app.post("/api/admin/special-schedules")
 async def special_schedule_create(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "special")
     body = await request.json()
     try:
         shift_id = schedule_store.save({**body, "special": True})
@@ -963,7 +1152,7 @@ async def special_schedule_create(request: Request):
 
 @app.put("/api/admin/special-schedules/{shift_id}")
 async def special_schedule_update(shift_id: int, request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "special")
     body = await request.json()
     try:
         schedule_store.save({**body, "special": True}, shift_id)
@@ -975,7 +1164,7 @@ async def special_schedule_update(shift_id: int, request: Request):
 
 @app.delete("/api/admin/special-schedules/{shift_id}")
 async def special_schedule_delete(shift_id: int, request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "special")
     try:
         schedule_store.delete(shift_id)
         _log(_admin_username(request), '删除特殊排班', f'#{shift_id}')
@@ -986,7 +1175,7 @@ async def special_schedule_delete(shift_id: int, request: Request):
 
 @app.put("/api/admin/schedules/{shift_id}")
 async def schedule_update(shift_id: int, request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "overview")
     try:
         body = await request.json()
         schedule_store.save(body, shift_id)
@@ -998,7 +1187,7 @@ async def schedule_update(shift_id: int, request: Request):
 
 @app.delete("/api/admin/schedules/{shift_id}")
 async def schedule_delete(shift_id: int, request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "overview")
     try:
         schedule_store.delete(shift_id)
         _log(_admin_username(request), '删除班次', f'#{shift_id}')
@@ -1009,13 +1198,13 @@ async def schedule_delete(shift_id: int, request: Request):
 
 @app.get("/api/admin/weekly-roster")
 async def weekly_get(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "weekly")
     return weekly_store.load()
 
 
 @app.put("/api/admin/weekly-roster")
 async def weekly_save(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "weekly")
     try:
         roster = weekly_store.save(await request.json())
         _log(_admin_username(request), '保存每周排班模板',
@@ -1030,7 +1219,7 @@ async def weekly_save(request: Request):
 
 @app.post("/api/admin/weekly-roster/publish")
 async def weekly_publish(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "weekly")
     try:
         body = await request.json()
         result = weekly_store.publish_until(
@@ -1050,11 +1239,19 @@ def _require_member(request: Request) -> str:
     return name
 
 
+def _require_member_permission(request: Request, permission: str) -> str:
+    name = _require_member(request)
+    if not permissions.has(name, permission):
+        raise HTTPException(status_code=403, detail="当前权限组不能访问此页面")
+    return name
+
+
 @app.get("/api/member/status")
 async def member_status(request: Request):
     clock = system_clock.public()
     try:
-        return {"logged_in": True, "username": _require_member(request), "now": clock}
+        name = _require_member(request)
+        return {"logged_in": True, "username": name, "permissions": sorted(permissions.permissions_of(name)), "now": clock}
     except HTTPException:
         return {"logged_in": False, "username": "", "now": clock}
 
@@ -1066,7 +1263,9 @@ async def member_login(request: Request):
         raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
     body = await request.json()
     name = str(body.get("username") or "").strip()
-    version = member_store.authenticate(name, str(body.get("password") or ""))
+    # The 原始管理员 is an administrator identity only; it must never open a duty session.
+    version = None if root_admin.is_root(name) else member_store.authenticate(
+        name, str(body.get("password") or ""))
     if not version:
         MEMBER_LIMITER.fail(key)
         raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
@@ -1079,22 +1278,22 @@ async def member_login(request: Request):
 
 @app.get("/api/member/field-duty")
 async def member_field_duty(request: Request):
-    name = _require_member(request)
+    name = _require_member_permission(request, "member_field")
     return field_duty.member_status(name)
 
 
 @app.get("/api/member/field-duty/pending")
 async def member_field_pending(request: Request):
-    _require_member(request)
+    _require_member_permission(request, "field_confirm")
     return field_duty.pending()
 
 
 @app.post("/api/member/field-duty/pending/{username}")
 async def member_field_confirm(username: str, request: Request):
-    _require_member(request)
+    _require_member_permission(request, "field_confirm")
     try:
         result = field_duty.confirm(username.strip())
-        _log(_require_member(request), '确认外勤', username.strip(), role='member')
+        _log(_require_member_permission(request, "field_confirm"), '确认外勤', username.strip(), role='member')
         return result
     except LookupError as exc:
         raise _schedule_error(exc) from exc
@@ -1102,7 +1301,7 @@ async def member_field_confirm(username: str, request: Request):
 
 @app.delete("/api/member/field-duty/pending/{username}")
 async def member_field_reject(username: str, request: Request):
-    name = _require_member(request)
+    name = _require_member_permission(request, "field_confirm")
     result = field_duty.set_participation(username.strip(), False)
     _log(name, '删除外勤登记', username.strip(), role='member')
     return result
@@ -1110,7 +1309,7 @@ async def member_field_reject(username: str, request: Request):
 
 @app.post("/api/member/field-duty")
 async def member_field_duty_register(request: Request):
-    name = _require_member(request)
+    name = _require_member_permission(request, "member_field")
     result = field_duty.register(name)
     _log(name, '登记外勤', result.get('label', ''), role='member')
     return result
@@ -1118,7 +1317,7 @@ async def member_field_duty_register(request: Request):
 
 @app.put("/api/admin/overview/attendance")
 async def admin_set_attendance(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "attendance_edit")
     body = await request.json()
     try:
         shift_id = int(body.get("shift_id"))
@@ -1150,13 +1349,13 @@ async def admin_set_field_duty(request: Request):
 
 @app.get("/api/admin/swaps")
 async def admin_swaps(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "swap")
     return {"items": swap_store.list_swaps()}
 
 
 @app.get("/api/admin/swaps/candidates")
 async def admin_swap_candidates(request: Request, username: str = "", shift_id: int = 0):
-    _require_permission(request, "schedule")
+    _require_permission(request, "swap")
     name = username.strip()
     if not name:
         raise HTTPException(status_code=400, detail="请先选择人员")
@@ -1165,7 +1364,7 @@ async def admin_swap_candidates(request: Request, username: str = "", shift_id: 
 
 @app.post("/api/admin/swaps")
 async def admin_swap_create(request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "swap")
     body = await request.json()
     try:
         swap_id = swap_store.create(
@@ -1181,7 +1380,7 @@ async def admin_swap_create(request: Request):
 
 @app.delete("/api/admin/swaps/{swap_id}")
 async def admin_swap_delete(swap_id: int, request: Request):
-    _require_permission(request, "schedule")
+    _require_permission(request, "swap")
     try:
         swap_store.delete(swap_id)
         _log(_admin_username(request), '删除调班', f'#{swap_id}')
@@ -1197,6 +1396,45 @@ async def admin_field_duty(request: Request, month: str = ""):
         return field_duty.overview(month or None)
     except ValueError as exc:
         raise _schedule_error(exc) from exc
+
+
+@app.get("/api/admin/field-duty/month")
+async def admin_field_month(request: Request, month: str = ""):
+    """Totals for one month, shown before deleting them."""
+    _require_permission(request, "field")
+    try:
+        return field_duty.month_summary(month or None)
+    except ValueError as exc:
+        raise _schedule_error(exc) from exc
+
+
+@app.delete("/api/admin/field-duty/month")
+async def admin_field_month_clear(request: Request, month: str = ""):
+    _require_permission(request, "field")
+    try:
+        result = field_duty.clear_month(month or None)
+    except ValueError as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '删除整月外勤',
+         f"{result['month']}：删除 {result['deleted']} 条记录（含已确认 {result['confirmed']} 条）")
+    return result
+
+
+@app.post("/api/admin/root-password")
+async def admin_root_password(request: Request):
+    """The 原始管理员 rotates its own password; nobody else can reach this."""
+    actor = _session_account(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="请先登录管理员")
+    if not root_admin.is_root(actor):
+        raise HTTPException(status_code=403, detail="仅原始管理员可以使用此入口")
+    body = await request.json()
+    try:
+        root_admin.change_password(str(body.get("password") or ""))
+        _log(actor, '修改原始管理员密码', '凭据文件已更新')
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    return {"ok": True}
 
 
 @app.post("/api/member/logout")
@@ -1219,46 +1457,120 @@ async def member_password(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/admin/push")
+async def push_get(request: Request):
+    _require_permission(request, "push")
+    return push_reports.status()
+
+
+@app.put("/api/admin/push")
+async def push_save(request: Request):
+    actor = _require_permission(request, "push")
+    try:
+        config = push_reports.save(await request.json())
+    except (ValueError, TypeError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(actor, '保存消息推送', f"每 {config['weeks']} 周，周日 {config['send_time']}，{len(config['recipients'])} 个目标邮箱")
+    return push_reports.status()
+
+
+@app.post("/api/admin/push/preview")
+async def push_preview(request: Request):
+    _require_permission(request, "push")
+    body = await request.json()
+    try:
+        if not isinstance(body, dict):
+            raise ValueError('预览配置格式不正确')
+        config = push_reports.validate(body.get('config'))
+        return push_reports.report(config, sample=body.get('sample') is True)
+    except (ValueError, TypeError) as exc:
+        raise _schedule_error(exc) from exc
+
+
+@app.get("/api/admin/permission-groups")
+async def permission_groups_list(request: Request):
+    _require_permission(request, "permission_groups")
+    return {"items": permissions.list_groups(), "tree": permissions.TREE}
+
+
+@app.post("/api/admin/permission-groups")
+async def permission_group_create(request: Request):
+    _require_permission(request, "permission_groups")
+    body = await request.json()
+    try:
+        group = permissions.save_group(body.get("name"), body.get("permissions", []))
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(_admin_username(request), '新建权限组', group['name'])
+    return group
+
+
+@app.put("/api/admin/permission-groups/{group_id}")
+async def permission_group_update(group_id: str, request: Request):
+    actor = _require_permission(request, "permission_groups")
+    body = await request.json()
+    try:
+        group = permissions.save_group(body.get("name"), body.get("permissions"), group_id)
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(actor, '修改权限组', f"{group['name']}：{'、'.join(group['permissions']) or '无页面权限'}")
+    return group
+
+
+@app.delete("/api/admin/permission-groups/{group_id}")
+async def permission_group_delete(group_id: str, request: Request):
+    actor = _require_permission(request, "permission_groups")
+    try:
+        result = permissions.delete_group(group_id)
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(actor, '删除权限组', f"{group_id}：{result['moved']} 个账号移入会员组")
+    return result
+
+
 @app.get("/api/admin/members")
 async def admin_members(request: Request):
-    actor = _require_permission(request, "accounts")
+    actor = _require_permission(request, "members")
     return {
         "items": member_store.list_accounts(),
-        "permissions": [{"id": key, "label": label, "hint": hint}
-                        for key, (label, hint) in permissions.PERMISSIONS.items()],
-        "tree": permissions.TREE,
-        "groups": list(permissions.GROUP_IDS),
+        "groups": permissions.list_groups(),
         "me": actor,
-        "can_grant": permissions.has(actor, "accounts_protected"),
+        "can_grant": True,
     }
 
 
 @app.put("/api/admin/members/permissions")
 async def admin_member_permissions(request: Request):
-    actor = _require_permission(request, "accounts")
+    _require_permission(request, "members")
     body = await request.json()
     name = str(body.get("username") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="请指定账号")
-    if not permissions.has(actor, "accounts_protected"):
-        raise HTTPException(status_code=403, detail="当前账号没有更改权限的资格")
+    if "permissions" in body:
+        raise HTTPException(status_code=400, detail="用户只能选择所属权限组，请在权限管理中修改访问范围")
+    _reject_root(name)
     try:
-        perms = permissions.set_permissions(name, body.get("permissions") or [])
-        _log(_admin_username(request), '更改权限', f"{name} → {'、'.join(sorted(perms)) or '无权限'}")
-    except LookupError as exc:
+        perms = permissions.set_group(name, body.get("group_id"))
+        _log(_admin_username(request), '更改所属权限组', f"{name} → {body.get('group_id')}")
+    except (ValueError, LookupError) as exc:
         raise _schedule_error(exc) from exc
-    return {"ok": True, "username": name, "permissions": sorted(perms)}
+    return {"ok": True, "username": name, "group_id": body['group_id'], "permissions": sorted(perms)}
 
 
 @app.put("/api/admin/members/password")
 async def admin_member_password(request: Request):
-    actor = _require_permission(request, "accounts")
+    actor = _require_permission(request, "members")
     body = await request.json()
     name = str(body.get("username") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="请指定账号")
+    if root_admin.is_root(name):
+        # Only the root itself may rotate its own password, through its own endpoint.
+        if name != actor:
+            raise HTTPException(status_code=403, detail="原始管理员的密码只能由本人修改")
+        raise HTTPException(status_code=400, detail="原始管理员请使用专用入口修改密码")
     # Only the account itself or a holder of "更改权限" may set a password.
-    if name != actor and not permissions.has(actor, "accounts_protected"):
+    if name != actor and not permissions.has(actor, "members"):
         raise HTTPException(status_code=403, detail="仅账号本人或拥有“更改权限”者可以更改密码")
     try:
         member_store.set_password(name, str(body.get("password") or ""))
@@ -1270,16 +1582,28 @@ async def admin_member_password(request: Request):
 
 @app.post("/api/admin/members/provision")
 async def admin_provision_members(request: Request):
-    _require_permission(request, "accounts")
+    actor = _session_account(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="请先登录管理员")
+    if not any(permissions.has(actor, p) for p in ('members', 'weekly')):
+        raise HTTPException(status_code=403, detail="当前账号没有此权限")
     result = member_store.provision()
     _log(_admin_username(request), '补齐排班人员账号',
          f"新建 {result['created']} 个，已存在 {result['existing']} 个")
     return result
 
 
+@app.post("/api/admin/members/cleanup")
+async def admin_cleanup_members(request: Request):
+    actor = _require_permission(request, "members")
+    result = member_store.cleanup_unused()
+    _log(actor, '清理多余用户', f"删除 {result['deleted']} 个：{'、'.join(result['usernames'])}")
+    return result
+
+
 @app.post("/api/admin/members")
 async def admin_add_member(request: Request):
-    _require_permission(request, "accounts_manage")
+    _require_permission(request, "members")
     body = await request.json()
     try:
         result = member_store.create(body.get("username"))
@@ -1291,13 +1615,14 @@ async def admin_add_member(request: Request):
 
 @app.delete("/api/admin/members")
 async def admin_delete_member(request: Request, username: str = ""):
-    actor = _require_permission(request, "accounts_manage")
+    actor = _require_permission(request, "members")
     name = username.strip()
     if not name:
         try:
             name = str((await request.json()).get("username") or "").strip()
         except Exception as exc:
             raise HTTPException(status_code=400, detail="请指定要删除的账号") from exc
+    _reject_root(name)
     if not _may_manage(name, actor):
         raise HTTPException(status_code=403, detail="该账号拥有权限，需具备更改权限的资格才能删除")
     try:
@@ -1310,11 +1635,12 @@ async def admin_delete_member(request: Request, username: str = ""):
 
 @app.patch("/api/admin/members")
 async def admin_update_member(request: Request):
-    actor = _require_permission(request, "accounts")
+    actor = _require_permission(request, "members")
     body = await request.json()
     if "active" in body and not isinstance(body["active"], bool):
         raise HTTPException(status_code=400, detail="账号状态格式错误")
     target = str(body.get("username") or "").strip()
+    _reject_root(target)
     # Changing state or resetting a password of a privileged account needs the grant right.
     if not _may_manage(target, actor):
         raise HTTPException(status_code=403, detail="该账号拥有权限，需具备更改权限的资格才能操作")

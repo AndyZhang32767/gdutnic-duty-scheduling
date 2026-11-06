@@ -55,7 +55,7 @@ class DataInitializationTest(unittest.TestCase):
         script = '''
 from fastapi.testclient import TestClient
 from server.app import app
-from server import db, admin_store
+from server import db, admin_store, member_store, permissions
 from pathlib import Path
 assert db.DATA == Path.cwd() / 'data'
 with TestClient(app) as client:
@@ -63,18 +63,42 @@ with TestClient(app) as client:
     if not db.get_setting(db.connect(), 'bootstrap_test_done'):
         assert response.status_code == 302
         assert client.get(response.headers['location']).status_code == 200
-        result = client.post('/api/admin/register', json={'username':'测试管理员','password':'test-password-123'})
+        # The first account is the 原始管理员; its name is fixed by the server.
+        result = client.post('/api/admin/register', json={'username':'ignored',
+                                                          'password':'test-password-123'})
         assert result.status_code == 200, result.text
+        assert result.json()['username'] == '原始管理员'
+        member_store.create('重启验证会员')
+        assert permissions.permissions_of('重启验证会员') == set(permissions.DEFAULT_PERMISSIONS)
+        assert client.post('/api/member/login', json={'username':'重启验证会员',
+                                                     'password':'gg2017'}).status_code == 200
+        changed = client.post('/api/member/password', json={'old_password':'gg2017',
+                                                           'new_password':'changed-member-password'})
+        assert changed.status_code == 200, changed.text
         with db.write() as conn:
             db.set_setting(conn, 'bootstrap_test_done', True)
     else:
         assert response.status_code == 200
         assert client.get('/' + admin_store.path()).status_code == 200
-        assert client.post('/api/admin/login', json={'username':'测试管理员','password':'test-password-123'}).status_code == 200
+        assert client.post('/api/admin/login', json={'username':'原始管理员',
+                                                     'password':'test-password-123'}).status_code == 200
+        # A fresh process and the complete startup must preserve the changed hash,
+        # including when roster provisioning encounters the same member again.
+        assert member_store.create_missing(['重启验证会员'])['created'] == 0
+        assert client.post('/api/member/login', json={'username':'重启验证会员',
+                                                     'password':'gg2017'}).status_code == 401
+        assert client.post('/api/member/login', json={'username':'重启验证会员',
+                                                     'password':'changed-member-password'}).status_code == 200
+    # The root account never shows up in the account list, even to itself.
+    listed = client.get('/api/admin/members').json()['items']
+    assert all(item['username'] != '原始管理员' for item in listed), listed
     assert client.get('/data/.env').status_code == 404
     assert client.get('/data/app.sqlite').status_code == 404
+    assert client.get('/data/root_admin.json').status_code == 404
 assert db.DB_PATH.is_file()
 assert (db.DATA / 'session_secret.txt').is_file()
+assert (db.DATA / 'root_admin.json').is_file()
+assert (db.DATA / 'root_admin.json').stat().st_mode & 0o777 == 0o600
 '''
         env = {**os.environ, 'DB_BACKEND': 'sqlite', 'PYTHONPATH': str(self.root), 'PYTHONDONTWRITEBYTECODE': '1'}
         env.pop('SESSION_SECRET', None)

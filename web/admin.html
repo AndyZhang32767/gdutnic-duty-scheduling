@@ -15,7 +15,7 @@
   <div class="admin-board-left">
     <div class="admin-logo"><img src="/icon/gdutnic.png" alt="网协标志"></div>
     <h1 id="authTitle">管理员登录</h1>
-    <p>登录后维护班次与值班人员，查看签到记录。</p>
+    <p id="authHint">登录后维护班次与值班人员，查看签到记录。</p>
   </div>
   <form id="authForm" method="post" class="admin-board-right">
     <label class="outlined-field"><input name="username" autocomplete="username" placeholder=" " required><span>用户名</span></label>
@@ -35,10 +35,13 @@
       <button type="button" id="weeklyTab" class="ga-nav-item">每周排班</button>
       <button type="button" id="specialTab" class="ga-nav-item">特殊排班</button>
       <button type="button" id="swapTab" class="ga-nav-item">调换值班</button>
-      <button type="button" id="membersTab" class="ga-nav-item">用户管理</button>
       <button type="button" id="fieldTab" class="ga-nav-item">外勤管理</button>
-      <button type="button" id="settingsTab" class="ga-nav-item">其他设置</button>
+      <button type="button" id="pushTab" class="ga-nav-item">消息推送</button>
+      <button type="button" id="membersTab" class="ga-nav-item">用户管理</button>
+      <button type="button" id="permissionGroupsTab" class="ga-nav-item">权限管理</button>
       <button type="button" id="logsTab" class="ga-nav-item">查看日志</button>
+      <button type="button" id="dataTab" class="ga-nav-item">数据管理</button>
+      <button type="button" id="settingsTab" class="ga-nav-item">其他设置</button>
     </nav>
     <div class="panel-footer"><button id="logout" class="btn danger" hidden>退出登录</button></div>
   </aside>
@@ -57,7 +60,7 @@
         <div class="section-head"><h2 data-icon="clock-outline">当前值班</h2><div><button id="refresh" class="btn tonal" data-icon="refresh">刷新</button><button id="add" class="btn primary" data-icon="plus">新增班次</button></div></div>
         <div id="shiftTimeline" class="shift-timeline"></div>
         <p id="status" role="status" aria-live="polite"></p>
-        <section class="section-head range-head"><h2 id="weekTitle" data-icon="calendar-week-outline">本周排班</h2><div class="range-nav"><button type="button" id="weekPrev" class="btn tonal icon-btn" data-icon="chevron-left" aria-label="上一周" title="上一周" disabled></button><span id="weekRange" class="hint range-label"></span><button type="button" id="weekNext" class="btn tonal icon-btn" data-icon="chevron-right" aria-label="下一周" title="下一周" disabled></button><span class="range-today"><button type="button" id="weekToday" class="btn tonal" data-icon="calendar-outline">回到本周</button></span></div></section>
+        <section class="section-head range-head"><h2 id="weekTitle" data-icon="calendar-week-outline">本周排班</h2><div class="range-nav"><button type="button" id="weekPrev" class="btn tonal icon-btn" data-icon="chevron-left" aria-label="上一周" title="上一周" disabled></button><span id="weekRange" class="hint range-label"></span><button type="button" id="weekNext" class="btn tonal icon-btn" data-icon="chevron-right" aria-label="下一周" title="下一周" disabled></button><span class="range-today"><button type="button" id="weekToday" class="btn tonal" data-icon="calendar-outline">回到本周</button><button type="button" id="weekClear" class="btn danger" data-icon="calendar-remove-outline" disabled>删除本周排班</button></span></div></section>
         <section id="weekBoard" class="week-board"></section>
         <section class="section-head anomaly-head">
           <h2 data-icon="chart-box-outline">异常统计</h2>
@@ -101,6 +104,7 @@
           </div>
           <label class="review-check"><input id="weeklyReviewed" type="checkbox"><span>我已核对人员姓名</span></label>
           <div class="actions">
+            <button type="button" id="completeMembers" class="btn tonal" data-icon="account-plus-outline">补全用户</button>
             <button type="submit" class="btn primary" data-icon="content-save-outline">保存每周排班</button>
             <button type="button" id="clearSchedules" class="btn danger" data-icon="calendar-remove-outline">清除所有排班</button>
           </div>
@@ -143,12 +147,48 @@
         <section id="swapList" class="shifts"></section>
       </section>
 
+      <section id="pushPage" hidden>
+        <div class="hero"><div><h1 data-icon="email-outline">消息推送</h1><p>让每个完整周期的考勤情况，按时抵达收件箱。</p></div><button id="pushSave" class="btn primary" data-icon="content-save-outline">保存推送设置</button></div>
+        <div class="card push-settings">
+          <div class="section-head"><h2>发送计划</h2><label class="push-switch"><input id="pushEnabled" type="checkbox"><span>启用定时推送</span></label></div>
+          <label for="pushAddress">目标邮箱</label>
+          <form id="pushRecipientForm" class="push-address-form"><input id="pushAddress" type="email" autocomplete="email" placeholder="name@example.com" required aria-label="目标邮箱"><button class="btn tonal" data-icon="plus">添加邮箱</button></form>
+          <div id="pushRecipients" class="push-recipients" aria-label="已添加的目标邮箱"></div>
+          <div class="push-plan"><label>推送频率<select id="pushWeeks"><option value="1">1 周 / 次</option><option value="2">2 周 / 次</option><option value="4">4 周 / 次</option></select></label><label>周日发件时间<input id="pushTime" type="time" value="09:00" required></label><div class="push-cutoff"><strong>周六 23:59 截止</strong><span>北京时间 · 按周日到周六汇总</span></div></div>
+          <p id="pushNext" class="hint"></p><p id="pushSmtp" class="hint"></p>
+          <p id="pushStatus" role="status" aria-live="polite"></p>
+        </div>
+        <div class="section-head push-preview-head"><div><h2>邮件格式</h2><p class="hint">双击标题、开头或结尾编辑。勾选列以展示；短按列名排序，长按拖动调序。</p></div><label class="push-switch"><input id="pushSample" type="checkbox" checked><span>使用示例数据</span></label></div>
+        <div class="push-window">
+          <div class="push-window-bar"><span id="pushPreviewRange">邮件预览</span><span id="pushPreviewBadge">示例数据 · 仅预览，不会发送</span></div>
+          <div class="push-letter">
+            <div id="pushTitle" class="push-editable push-title" tabindex="0" role="button" aria-label="双击编辑标题"></div>
+            <div id="pushOpening" class="push-editable" tabindex="0" role="button" aria-label="双击编辑开头"></div>
+            <div id="pushSections"></div>
+            <div id="pushClosing" class="push-editable" tabindex="0" role="button" aria-label="双击编辑结尾"></div>
+          </div>
+        </div>
+        <p id="pushPreviewStatus" class="hint" role="status" aria-live="polite"></p>
+        <details class="card push-history"><summary>最近发送记录</summary><div id="pushDeliveries"></div></details>
+      </section>
+      <dialog id="pushEditor"><form id="pushEditorForm"><div class="section-head"><h2 id="pushEditorTitle">编辑格式</h2><button type="button" id="pushEditorClose" class="btn tonal" data-icon="close">关闭</button></div><label id="pushEditorLabel">内容<textarea id="pushEditorValue" rows="6"></textarea></label><p class="hint">可用占位符：{开始日期}、{结束日期}、{周期周数}。发送时自动替换。</p><p id="pushEditorStatus" role="alert"></p><button class="btn primary" data-icon="content-save-outline">应用到预览</button></form></dialog>
+
+      <section id="permissionGroupsPage" hidden>
+        <div class="hero">
+          <div><h1 data-icon="shield-account-outline">权限管理</h1><p>以权限组统一管理访问范围。展开权限组，选择成员可以访问的页面。</p></div>
+          <button id="addPermissionGroup" class="btn primary" data-icon="plus">新建权限组</button>
+        </div>
+        <p id="permissionGroupsStatus" role="status" aria-live="polite"></p>
+        <div id="permissionGroupList" class="permission-group-list"></div>
+      </section>
+
       <section id="membersPage" hidden>
         <div class="hero">
-          <div><h1 data-icon="account-group-outline">用户管理</h1><p>所有账号统一管理，每个账号带一张权限表。用户名为姓名，新增账号的初始密码为 gg2017。</p></div>
+          <div><h1 data-icon="account-group-outline">用户管理</h1><p>按权限组管理账号。新账号默认加入会员组，初始密码为 gg2017。</p></div>
           <div class="hero-actions">
             <label class="member-search" data-icon="magnify"><input id="memberSearch" type="search" placeholder="搜索姓名" autocomplete="off" aria-label="搜索用户"></label>
             <button id="addMember" class="btn primary" data-icon="account-plus-outline">添加账号</button>
+            <button id="cleanupMembers" class="btn danger" data-icon="account-off-outline">清理多余用户</button>
           </div>
         </div>
         <p id="membersStatus" role="status" aria-live="polite"></p>
@@ -165,7 +205,7 @@
             <button id="fieldPrev" class="btn tonal icon-btn" data-icon="chevron-left" aria-label="上个月" title="上个月" type="button" disabled></button>
             <span id="fieldRange" class="hint range-label"></span>
             <button id="fieldNext" class="btn tonal icon-btn" data-icon="chevron-right" aria-label="下个月" title="下个月" type="button" disabled></button>
-            <span class="range-today"><button id="fieldToday" class="btn tonal" data-icon="calendar-outline" type="button" hidden>回到本月</button></span>
+            <span class="range-today"><button id="fieldToday" class="btn tonal" data-icon="calendar-outline" type="button" hidden>回到本月</button><button id="fieldClear" class="btn danger" data-icon="calendar-remove-outline" type="button" disabled>删除本月外勤</button></span>
           </div>
         </section>
         <div class="stats overview-stats">
@@ -221,6 +261,45 @@
           <button type="submit" class="btn primary" data-icon="tune-variant">设置</button>
           <p class="clock-now">当前时间：<strong id="clockNow">—</strong></p>
         </form>
+
+        <form id="smtpForm" method="post" class="card rules-card" hidden>
+          <h2 data-icon="email-outline">SMTP 发件邮箱</h2>
+          <p class="hint">用于系统发送邮件。密码只保存在服务器配置中，页面不会回显已保存的明文。</p>
+          <div class="rules-grid">
+            <label>SMTP 服务器<input name="host" id="smtpHost" type="text" autocomplete="off" placeholder="smtp.example.com"></label>
+            <label>端口<input name="port" id="smtpPort" type="number" min="1" max="65535" step="1" placeholder="465"></label>
+            <label>加密方式
+              <select name="security" id="smtpSecurity">
+                <option value="ssl">SSL</option>
+                <option value="starttls">STARTTLS</option>
+                <option value="none">None</option>
+              </select>
+            </label>
+          </div>
+          <div class="rules-grid">
+            <label>登录账号<input name="username" id="smtpUsername" type="text" autocomplete="off" placeholder="user@example.com"></label>
+            <label>登录密码<input name="password" id="smtpPassword" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
+          </div>
+          <div class="rules-grid">
+            <label>发件邮箱<input name="from_address" id="smtpFromAddress" type="text" autocomplete="off" placeholder="noreply@example.com"></label>
+            <label>发件人名称<input name="from_name" id="smtpFromName" type="text" autocomplete="off" placeholder="网络服务协会"></label>
+          </div>
+          <label class="review-check"><input id="smtpEnabled" type="checkbox"><span>启用 SMTP</span></label>
+          <p id="smtpStatus" role="status" aria-live="polite"></p>
+          <div class="actions">
+            <button type="submit" class="btn primary" data-icon="content-save-outline">保存 SMTP 设置</button>
+            <button type="button" id="smtpTest" class="btn tonal" data-icon="send">发送测试邮件</button>
+          </div>
+        </form>
+
+        <form id="rootPasswordForm" method="post" class="card rules-card" hidden>
+          <h2 data-icon="shield-account-outline">原始管理员密码</h2>
+          <p class="hint">原始管理员拥有不可更改的最高权限，名称固定、不出现在用户管理中，凭据单独保存在 data/root_admin.json。这里只能修改密码。</p>
+          <label>新密码<input name="password" id="rootNewPassword" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>
+          <label>再次输入<input name="confirm" id="rootConfirmPassword" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>
+          <p id="rootPasswordStatus" role="status" aria-live="polite"></p>
+          <button type="submit" class="btn primary" data-icon="lock-reset">修改密码</button>
+        </form>
       </section>
 
       <dialog id="clearDialog">
@@ -230,6 +309,66 @@
           <label>请输入“清除所有排班”以确认<input name="confirm" autocomplete="off" placeholder="清除所有排班" required></label>
           <p id="clearStatus" role="alert"></p>
           <button type="submit" class="btn danger" data-icon="delete-outline">确认清除</button>
+        </form>
+      </dialog>
+
+      <section id="dataPage" hidden>
+        <div class="hero">
+          <div><h1 data-icon="database-outline">数据管理</h1><p>直接查看数据库中的记录，可预览、编辑和删除。密码与密钥类字段不显示也无法在此修改。</p></div>
+        </div>
+        <div class="data-layout">
+          <nav id="dataTables" class="data-tables" aria-label="数据表"></nav>
+          <div class="data-main">
+            <div class="data-toolbar">
+              <label class="member-search" data-icon="magnify"><input id="dataSearch" type="search" placeholder="在表中搜索" autocomplete="off" aria-label="搜索当前表"></label>
+              <button id="dataRefresh" class="btn tonal" type="button" data-icon="refresh">刷新</button>
+            </div>
+            <p id="dataStatus" role="status" aria-live="polite"></p>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead id="dataHead"></thead>
+                <tbody id="dataRows"></tbody>
+              </table>
+            </div>
+            <div class="data-pager">
+              <button id="dataClearSelected" class="btn danger" type="button" data-icon="delete-outline" hidden>清除选中</button>
+              <button id="dataClearPage" class="btn danger" type="button" data-icon="calendar-remove-outline" disabled>清除该页</button>
+              <span class="data-pager-spacer"></span>
+              <button id="dataPrev" class="btn tonal icon-btn" type="button" data-icon="chevron-left" aria-label="上一页" disabled></button>
+              <span id="dataRange" class="hint range-label"></span>
+              <button id="dataNext" class="btn tonal icon-btn" type="button" data-icon="chevron-right" aria-label="下一页" disabled></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <dialog id="dataEditDialog">
+        <form id="dataEditForm">
+          <div class="section-head"><h2 id="dataEditTitle">编辑记录</h2><button type="button" id="closeDataEdit" class="btn tonal" data-icon="close">取消</button></div>
+          <p id="dataEditMeta" class="hint"></p>
+          <div id="dataEditFields" class="data-edit-fields"></div>
+          <p id="dataEditStatus" role="alert"></p>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存修改</button>
+        </form>
+      </dialog>
+
+      <dialog id="dataDeleteDialog">
+        <form id="dataDeleteForm">
+          <div class="section-head"><h2>确认删除记录</h2><button type="button" id="closeDataDelete" class="btn tonal" data-icon="close">取消</button></div>
+          <p id="dataDeleteBody"></p>
+          <p id="dataDeleteStatus" role="alert"></p>
+          <button type="submit" class="btn danger" data-icon="delete-outline">确认删除</button>
+        </form>
+      </dialog>
+
+      <dialog id="rangeClearDialog">
+        <form id="rangeClearForm">
+          <div class="section-head"><h2 id="rangeClearTitle">确认删除</h2><button type="button" id="closeRangeClear" class="btn tonal" data-icon="close">取消</button></div>
+          <p id="rangeClearBody"></p>
+          <p>请输入 <strong id="rangeClearPhrase"></strong> 以确认：</p>
+          <label>确认语<input name="confirm" autocomplete="off" placeholder="" required></label>
+          <p id="rangeClearStatus" role="alert"></p>
+          <button type="submit" class="btn danger" data-icon="delete-outline">确认删除</button>
         </form>
       </dialog>
 
@@ -252,13 +391,24 @@
         <div id="detailMembers" class="detail-members"></div>
       </dialog>
 
+      <dialog id="permissionGroupCreateDialog">
+        <form id="permissionGroupCreateForm">
+          <div class="section-head"><h2>新建权限组</h2><button type="button" id="closePermissionGroupCreate" class="btn tonal" data-icon="close">取消</button></div>
+          <label>权限组名称<input name="name" maxlength="64" placeholder="例如：排班负责人" required></label>
+          <p class="hint">创建后展开权限组，设置可以访问的页面。</p>
+          <p id="permissionGroupCreateStatus" role="alert"></p>
+          <button type="submit" class="btn primary" data-icon="plus">创建权限组</button>
+        </form>
+      </dialog>
+
       <dialog id="permissionDialog">
         <form id="permissionForm">
           <div class="section-head"><h2 id="permissionTitle">更改权限</h2><button type="button" id="closePermission" class="btn tonal" data-icon="close">关闭</button></div>
-          <p class="hint">勾选该账号可使用的功能组；拥有“更改权限”者才能为他人分配权限。</p>
-          <div id="permissionList" class="permission-list"></div>
+          <p class="hint">选择该账号所属的权限组。访问范围统一在「权限管理」中维护。</p>
+          <label>所属权限组<select id="permissionGroupSelect" required></select></label>
+          <p id="permissionGroupPreview" class="hint"></p>
           <p id="permissionStatus" role="alert"></p>
-          <button type="submit" class="btn primary" data-icon="content-save-outline">保存权限</button>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存权限组</button>
         </form>
       </dialog>
 
@@ -312,20 +462,27 @@
     </div>
   </main>
 </div>
-<script src="/static/animated-button.js"></script>
+<script src="/static/password-visibility.js"></script><script src="/static/animated-button.js"></script>
 <script src="/static/ripple.js"></script>
 <script src="/static/shift-timeline.js"></script>
 <script src="/static/checkin-window.js"></script>
 <script src="/static/schedule.js"></script>
 <script src="/static/status-editor.js"></script>
+<script src="/static/range-clear.js"></script>
+<script src="/static/week-board.js"></script>
 <script src="/static/overview.js"></script>
 <script src="/static/weekly.js"></script>
 <script src="/static/weekly-import.js"></script>
 <script src="/static/special.js"></script>
 <script src="/static/swaps.js"></script>
+<script src="/static/permission-tree.js"></script>
+<script src="/static/permission-groups.js"></script>
 <script src="/static/members.js"></script>
 <script src="/static/settings.js"></script>
 <script src="/static/logs.js"></script>
+<script src="/static/data-admin.js"></script>
 <script src="/static/field-admin.js"></script>
+<script src="/static/push-layout.js"></script>
+<script src="/static/push.js"></script>
 </body>
 </html>

@@ -38,7 +38,11 @@ function button(text, cls, fn) {
   n.type='button'; n.onclick=fn; return n;
 }
 async function load() {
-  if (admin && typeof window.loadOverview === 'function') { await window.loadOverview(); return; }
+  if (admin) {
+    if (window.adminPermissions?.includes('overview') && $('dailyTab').classList.contains('active')
+        && typeof window.loadOverview === 'function') await window.loadOverview();
+    return;
+  }
   const token=++generation;
   $('status').textContent='正在加载排班…';
   window.updateShiftTimeline([]);
@@ -114,12 +118,30 @@ if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
   $('authForm').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget;$('authStatus').textContent='';$('authSubmit').disabled=true;try{await api('/api/admin/'+(setup?'login':'register'),'POST',Object.fromEntries(new FormData(form)));form.reset();await boot();}catch(err){$('authStatus').textContent=err.message;}finally{$('authSubmit').disabled=false;}};
   $('logout').onclick=async()=>{try{await api('/api/admin/logout','POST');await boot();}catch(e){$('status').textContent=e.message;}};
   async function boot(){try{const state=await api('/api/admin/status');setup=state.setup;
+    // 注册成功后服务端固定创建「原始管理员」，表单只收密码。
+    window.isRootAdmin = !!state.root;
+    const userField = $('authForm').querySelector('[name=username]');
+    if (userField) {
+      userField.closest('label').hidden = !setup;
+      userField.required = setup;
+      if (!setup) userField.value = '原始管理员';
+    }
+    if ($('rootPasswordForm')) $('rootPasswordForm').hidden = !state.root;
     // Older backends do not send `permissions`; treat that as full access rather than hiding every menu.
     syncClock(state.now);
     window.adminPermissions = state.logged_in && Array.isArray(state.permissions) ? state.permissions : null;
-    window.canEditStatus = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('schedule');
+    window.canEditAttendance = !Array.isArray(window.adminPermissions)
+      || window.adminPermissions.includes('attendance_edit');
     window.canEditField = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('field');
-    if (typeof window.applyPermissions === 'function') window.applyPermissions(window.adminPermissions);$('authTitle').textContent='管理员登录';$('authSubmit').textContent=setup?'登录':'注册首个管理员（获得全部权限）';document.body.classList.toggle('auth-pending',!state.logged_in);$('authCard').hidden=state.logged_in;$('workspace').hidden=!state.logged_in;$('logout').hidden=!state.logged_in;if(state.logged_in)await load();}catch(e){$('authStatus').textContent=e.message;}}
+    window.canRules = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('rules');
+    window.canClock = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('clock');
+    window.canSmtp = !Array.isArray(window.adminPermissions) || window.adminPermissions.includes('smtp');
+    window.applySettingsPermissions?.();
+    if (typeof window.applyPermissions === 'function') window.applyPermissions(window.adminPermissions);$('authTitle').textContent=setup?'管理员登录':'创建原始管理员';
+    if ($('authHint')) $('authHint').textContent = setup
+      ? '登录后维护班次与值班人员，查看签到记录。'
+      : '首次创建固定名为「原始管理员」的账号，拥有不可更改的最高权限；只需设置密码。';
+    $('authSubmit').textContent=setup?'登录':'创建原始管理员';document.body.classList.toggle('auth-pending',!state.logged_in);$('authCard').hidden=state.logged_in;$('workspace').hidden=!state.logged_in;$('logout').hidden=!state.logged_in;if(state.logged_in)await load();}catch(e){$('authStatus').textContent=e.message;}}
   boot();
 }else bootMember();
 if(!admin) setInterval(()=>{
@@ -147,7 +169,13 @@ async function bootMember() {
     document.body.classList.toggle('auth-pending', !member);
     if ($('memberAuth')) $('memberAuth').hidden = !!member;
     $('workspace').hidden = !member;
-    if (member) { syncClock(state.now); if ($('memberGreeting')) $('memberGreeting').textContent = member.username+'，欢迎回来'; await load(); }
+    if (member) {
+      syncClock(state.now);
+      if ($('memberGreeting')) $('memberGreeting').textContent = member.username+'，欢迎回来';
+      applyMemberPermissions(state.permissions || []);
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadCurrentMemberPage, {once:true});
+      else await loadCurrentMemberPage();
+    }
     else { ++generation; items=[]; window.updateShiftTimeline([]); $('shifts').replaceChildren(); }
   } catch (err) { $('memberLoginStatus').textContent=err.message; }
 }
@@ -174,4 +202,38 @@ if (!admin) {
     catch(err) { $('passwordStatus').textContent=err.message; }
     finally { submit.disabled=false; }
   });
+}
+
+async function refreshAdminPermissions() {
+  const state = await api('/api/admin/status');
+  window.adminPermissions = state.logged_in ? (state.permissions || []) : [];
+  window.canEditAttendance = window.adminPermissions.includes('attendance_edit');
+  window.canEditField = window.adminPermissions.includes('field');
+  window.canRules = window.adminPermissions.includes('rules');
+  window.canClock = window.adminPermissions.includes('clock');
+  window.canSmtp = window.adminPermissions.includes('smtp');
+  if (window.applyPermissions) window.applyPermissions(window.adminPermissions);
+  if (!state.logged_in) location.reload();
+  return state;
+}
+
+function applyMemberPermissions(granted) {
+  const held = new Set(granted);
+  const pages = {duty: ['dutyTab', 'dutyPage', 'duty'],
+    scheduleList: ['scheduleListTab', 'scheduleListPage', 'schedule_list'],
+    field: ['fieldTab', 'fieldPage', 'member_field'],
+    confirm: ['fieldConfirmTab', 'fieldConfirmPage', 'field_confirm']};
+  let selected = Object.keys(pages).find(key => $(pages[key][0])?.classList.contains('active') && held.has(pages[key][2]));
+  selected ||= Object.keys(pages).find(key => held.has(pages[key][2]));
+  for (const [key, [tab, page, permission]] of Object.entries(pages)) {
+    if ($(tab)) { $(tab).hidden = !held.has(permission); $(tab).classList.toggle('active', key === selected); }
+    if ($(page)) $(page).hidden = key !== selected;
+  }
+  if ($('memberNoAccess')) $('memberNoAccess').hidden = !!selected;
+}
+async function loadCurrentMemberPage() {
+  if ($('scheduleListTab')?.classList.contains('active') && typeof loadMemberSchedules === 'function') { await loadMemberSchedules(); return; }
+  if ($('dutyTab')?.classList.contains('active')) await load();
+  else if ($('fieldTab')?.classList.contains('active') && typeof loadFieldDuty === 'function') await loadFieldDuty();
+  else if ($('fieldConfirmTab')?.classList.contains('active') && typeof loadFieldPending === 'function') await loadFieldPending();
 }

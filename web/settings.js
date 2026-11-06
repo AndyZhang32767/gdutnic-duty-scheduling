@@ -12,7 +12,7 @@ async function loadRules() {
     if (err.status === 401) $('rulesStatus').textContent = '登录状态已失效，请重新登录。';
   }
 }
-$('settingsTab').onclick = () => { showPage('settings'); loadRules(); };
+$('settingsTab').onclick = () => { showPage('settings'); applySettingsPermissions(); };
 $('rulesForm').onsubmit = async e => {
   e.preventDefault();
   const form = e.currentTarget, submit = form.querySelector('[type=submit]');
@@ -96,10 +96,116 @@ $('clockForm').onsubmit = async e => {
   finally { submit.disabled = false; }
 };
 
+// Each card follows its own permission: 值班时间 needs `rules`, 系统时间 needs `clock`.
+// A missing permissions list means an older backend, so everything stays visible.
+function applySettingsPermissions() {
+  const can = key => window[key] !== false;
+  if ($('rulesForm')) $('rulesForm').hidden = !can('canRules');
+  if ($('clockForm')) $('clockForm').hidden = !can('canClock');
+  if ($('smtpForm')) $('smtpForm').hidden = !can('canSmtp');
+  if (can('canSmtp')) loadSmtp();
+  if (can('canRules')) loadRules();
+  if (can('canClock')) {
+    loadClock();
+    clearInterval(clockTimer);
+    clockTimer = setInterval(tickClock, 1000);
+  } else {
+    clearInterval(clockTimer);
+  }
+}
+window.applySettingsPermissions = applySettingsPermissions;
+
 const originalSettingsClick = $('settingsTab').onclick;
 $('settingsTab').onclick = () => {
   originalSettingsClick();
-  loadClock();
-  clearInterval(clockTimer);
-  clockTimer = setInterval(tickClock, 1000);
+};
+
+
+// 原始管理员自行改密；接口只接受 root 本人，其它账号拿到 403。
+$('rootPasswordForm').onsubmit = async e => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const password = $('rootNewPassword').value;
+  const confirm = $('rootConfirmPassword').value;
+  const status = $('rootPasswordStatus');
+  if (password !== confirm) { status.textContent = '两次输入的密码不一致。'; return; }
+  const button = form.querySelector('[type=submit]');
+  button.disabled = true;
+  status.textContent = '';
+  try {
+    await api('/api/admin/root-password', 'POST', {password});
+    form.reset();
+    status.textContent = '密码已更新，请使用新密码重新登录。';
+  } catch (err) {
+    status.textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+
+// SMTP 发件邮箱：保存后服务端从不回显明文密码，只表示是否已设置。
+function paintSmtp(data) {
+  $('smtpHost').value = data.host || '';
+  $('smtpPort').value = data.port || '';
+  $('smtpSecurity').value = data.security || 'ssl';
+  $('smtpUsername').value = data.username || '';
+  $('smtpPassword').value = '';
+  $('smtpPassword').placeholder = data.has_password ? '已保存，留空表示不修改' : '尚未设置';
+  $('smtpFromAddress').value = data.from_address || '';
+  $('smtpFromName').value = data.from_name || '';
+  $('smtpEnabled').checked = !!data.enabled;
+}
+
+async function loadSmtp() {
+  $('smtpStatus').textContent = '正在加载 SMTP 配置…';
+  try {
+    paintSmtp(await api('/api/admin/smtp'));
+    $('smtpStatus').textContent = '';
+  } catch (err) {
+    $('smtpStatus').textContent = err.message;
+  }
+}
+
+$('smtpForm').onsubmit = async e => {
+  e.preventDefault();
+  const form = e.currentTarget, submit = form.querySelector('[type=submit]');
+  // Address validation lives on the server, so a bad value always explains itself.
+  submit.disabled = true;
+  $('smtpStatus').textContent = '正在保存…';
+  try {
+    const body = {
+      host: $('smtpHost').value.trim(),
+      port: $('smtpPort').value,
+      security: $('smtpSecurity').value,
+      username: $('smtpUsername').value.trim(),
+      from_address: $('smtpFromAddress').value.trim(),
+      from_name: $('smtpFromName').value.trim(),
+      enabled: $('smtpEnabled').checked,
+    };
+    // An empty box means "keep the stored password" rather than "clear it".
+    if ($('smtpPassword').value) body.password = $('smtpPassword').value;
+    paintSmtp(await api('/api/admin/smtp', 'POST', body));
+    $('smtpStatus').textContent = 'SMTP 设置已保存。';
+  } catch (err) {
+    $('smtpStatus').textContent = err.message;
+  } finally {
+    submit.disabled = false;
+  }
+};
+
+$('smtpTest').onclick = async () => {
+  const to = window.prompt('测试邮件收件地址', $('smtpFromAddress').value || '');
+  if (!to) return;
+  const button = $('smtpTest');
+  button.disabled = true;
+  $('smtpStatus').textContent = '正在发送测试邮件…';
+  try {
+    const result = await api('/api/admin/smtp/test', 'POST', {to});
+    $('smtpStatus').textContent = `测试邮件已发送到 ${result.to}，请检查收件箱。`;
+  } catch (err) {
+    $('smtpStatus').textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
 };

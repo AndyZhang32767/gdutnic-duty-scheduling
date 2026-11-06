@@ -1,6 +1,8 @@
 // Member-side field duty (外勤) registration for the current month.
 // `page` is 'duty', 'field' or 'confirm'.
 function showMemberPage(page) {
+  if ($('scheduleListPage')) $('scheduleListPage').hidden = page !== 'scheduleList';
+  if ($('scheduleListTab')) $('scheduleListTab').classList.toggle('active', page === 'scheduleList');
   $('dutyPage').hidden = page !== 'duty';
   $('fieldPage').hidden = page !== 'field';
   const confirm = $('fieldConfirmPage');

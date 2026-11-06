@@ -26,6 +26,10 @@ _conn: Any = None
 _local = threading.local()
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS push_deliveries (
+ id TEXT PRIMARY KEY, period_end TEXT NOT NULL, recipient TEXT NOT NULL,
+ state TEXT NOT NULL, updated_at TEXT NOT NULL, error TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -67,7 +71,10 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at);
 CREATE TABLE IF NOT EXISTS member_accounts (
  username TEXT PRIMARY KEY, password TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
- permissions TEXT NOT NULL DEFAULT ''
+ permissions TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS permission_groups (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, permissions TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS shifts (
  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, start TEXT NOT NULL,
@@ -105,7 +112,8 @@ CREATE TABLE IF NOT EXISTS weekly_instances (
 """
 # Added after the initial release; existing databases need an in-place upgrade.
 COLUMNS = {'shifts': {'special': 'INTEGER NOT NULL DEFAULT 0'},
-           'member_accounts': {'permissions': "VARCHAR(191) NOT NULL DEFAULT ''"},
+           'member_accounts': {'permissions': "VARCHAR(191) NOT NULL DEFAULT ''",
+                               'group_id': "VARCHAR(64) NOT NULL DEFAULT ''"},
            'attendance': {'status_override': "VARCHAR(16) NOT NULL DEFAULT ''"},
            'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0', 'status': 'TINYINT NOT NULL DEFAULT 2'}}
 

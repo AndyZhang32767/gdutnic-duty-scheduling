@@ -61,6 +61,9 @@ h2[data-icon]::before, h3[data-icon]::before { color: var(--md-primary); }
 [data-icon="clock-outline"] { --component-icon: url("/icon/components/clock-outline.svg"); }
 [data-icon="close"] { --component-icon: url("/icon/components/close.svg"); }
 [data-icon="content-save-outline"] { --component-icon: url("/icon/components/content-save-outline.svg"); }
+[data-icon="email-outline"] { --component-icon: url("/icon/components/email-outline.svg"); }
+[data-icon="send"] { --component-icon: url("/icon/components/send.svg"); }
+[data-icon="database-outline"] { --component-icon: url("/icon/components/database-outline.svg"); }
 [data-icon="delete-outline"] { --component-icon: url("/icon/components/delete-outline.svg"); }
 [data-icon="download"] { --component-icon: url("/icon/components/download.svg"); }
 [data-icon="lock-outline"] { --component-icon: url("/icon/components/lock-outline.svg"); }
@@ -76,3 +79,12 @@ h2[data-icon]::before, h3[data-icon]::before { color: var(--md-primary); }
 [data-icon="swap-horizontal"] { --component-icon: url("/icon/components/swap-horizontal.svg"); }
 [data-icon="tune-variant"] { --component-icon: url("/icon/components/tune-variant.svg"); }
 [data-icon="upload"] { --component-icon: url("/icon/components/upload.svg"); }
+
+.stats.overview-stats > .stat-with-icon::before {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+[data-icon="eye-outline"] { --component-icon: url("/icon/components/eye-outline.svg"); }
+[data-icon="eye-off-outline"] { --component-icon: url("/icon/components/eye-off-outline.svg"); }
+.password-visibility[data-icon]::before { width: 20px; height: 20px; flex-basis: 20px; }

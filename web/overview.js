@@ -38,12 +38,18 @@ function renderWeek(week, today) {
   // The heading would be wrong while browsing another week.
   $('weekTitle').textContent = isCurrent ? '本周排班' : '周排班';
   $('weekToday').hidden = isCurrent;
+  // Deleting an empty week would be a no-op, so the button follows the shift count.
+  $('weekClear').disabled = !week.shifts;
+  $('weekClear').title = week.shifts
+    ? `删除 ${week.start} 至 ${week.end} 的 ${week.shifts} 个班次`
+    : '这一周没有排班';
   const prev = $('weekPrev'), next = $('weekNext');
   prev.disabled = !week.previous;
   next.disabled = !week.next;
   prev.title = week.previous ? `上一周（${week.previous} 起）` : '已到最早一周';
   next.title = week.next ? `下一周（${week.next} 起）` : '已到最晚一周';
   const board = $('weekBoard');
+  board.specialGapObserver?.disconnect();
   board.replaceChildren();
   // A week with no shifts says so instead of rendering an empty seven-column grid.
   if (!week.days.some(day => day.shifts.length)) {
@@ -51,8 +57,7 @@ function renderWeek(week, today) {
       isCurrent ? '本周暂无排班。' : `${week.start} 至 ${week.end} 没有排班。`));
     return;
   }
-  // One grid row per shift index keeps Monday–Sunday cards aligned horizontally.
-  const rows = Math.max(1, ...week.days.map(d => d.shifts.length));
+  const rows = weekBoardRows(week.days);
   const boardHead = el('div', 'week-row week-head-row');
   boardHead.style.gridRow = '1';
   boardHead.append(el('div', 'week-day-head', '星期'));
@@ -60,17 +65,26 @@ function renderWeek(week, today) {
     boardHead.append(el('div', 'week-day-head', `${WEEK_NAMES[day.weekday]} ${day.day.slice(5)}${day.day === today ? ' · 今天' : ''}`));
   }
   board.append(boardHead);
-  for (let index = 0; index < rows; index++) {
-    const row = el('div', 'week-row');
+  for (let index = 0; index < rows.length; index++) {
+    const row = el('div', 'week-row' + (rows[index].special ? ' week-special-row' : ''));
     row.style.gridRow = String(index + 2);
-    row.append(el('div', 'week-slot-label', `第 ${index + 1} 班`));
-    for (const day of week.days) {
+    row.append(el('div', 'week-slot-label', rows[index].label));
+    for (const [dayIndex, day] of week.days.entries()) {
       const cell = el('div', 'week-cell' + (day.day === today ? ' today' : ''));
-      const shift = day.shifts[index];
-      if (shift) cell.append(overviewCard(shift));
+      rows[index].cells[dayIndex].forEach(shift => cell.append(overviewCard(shift)));
       row.append(cell);
     }
     board.append(row);
+  }
+  if (rows.some(row => row.special)) {
+    const regularRows = Array.from(board.querySelectorAll('.week-row:not(.week-head-row):not(.week-special-row)'));
+    const updateUnit = () => board.style.setProperty('--week-unit',
+      `${Math.max(...regularRows.map(row => row.getBoundingClientRect().height))}px`);
+    updateUnit();
+    if (typeof ResizeObserver !== 'undefined') {
+      board.specialGapObserver = new ResizeObserver(updateUnit);
+      regularRows.forEach(row => board.specialGapObserver.observe(row));
+    }
   }
 }
 
@@ -80,14 +94,19 @@ function openDetail(s) {
   const list = $('detailMembers');
   list.replaceChildren();
   for (const m of s.members) {
-    const row = el('button', `detail-member clickable ${m.status || 'pending'}`);
-    row.type = 'button';
+    // Only a holder of 更改考勤状态 gets a button; everyone else sees a plain row.
+    const editable = !!window.canEditAttendance;
+    const row = el(editable ? 'button' : 'div',
+      `detail-member ${editable ? 'clickable ' : ''}${m.status || 'pending'}`);
+    if (editable) {
+      row.type = 'button';
+      row.title = '点击更改考勤状态';
+      row.onclick = () => editAttendance(s, m);
+    }
     row.append(el('span', 'detail-name', m.name), el('span', 'detail-status', STATUS_TEXT[m.status] || '待签到'));
     row.append(el('span', 'detail-time', m.checked_at
       ? new Date(m.checked_at).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'})
       : '未签到'));
-    row.title = '点击更改考勤状态';
-    row.onclick = () => editAttendance(s, m);
     list.append(row);
   }
   $('detailDialog').showModal();
@@ -95,7 +114,7 @@ function openDetail(s) {
 
 // Manual fixes take precedence over the automatic late/absent calculation.
 function editAttendance(shift, member) {
-  if (!window.canEditStatus) return;
+  if (!window.canEditAttendance) return;
   openStatusEditor({
     title: '更改考勤状态',
     meta: `${member.name} · ${shift.day} ${shiftTime(shift)}`,
@@ -146,6 +165,25 @@ async function shiftWeek(direction) {
   await loadOverview();
 }
 
+// Delete the whole visible week, archiving its check-ins first.
+function clearVisibleWeek() {
+  const week = overviewData?.week;
+  if (!week || !week.shifts) return;
+  const phrase = '删除本周排班';
+  openRangeClear({
+    title: '确认删除整周排班',
+    phrase,
+    body: `将删除 ${week.start} 至 ${week.end} 的 ${week.shifts} 个班次、`
+      + `${week.people} 条排班人员记录；其中 ${week.checked} 条已签到会归档到出勤历史，`
+      + `仍可在统计中查到。每周固定排班表和账号不受影响。`,
+    submit: () => api(`/api/admin/schedules/week?start=${encodeURIComponent(week.start)}`, 'DELETE'),
+    onDone: async () => {
+      await loadOverview();
+      $('status').textContent = `已删除 ${week.start} 至 ${week.end} 的整周排班。`;
+    },
+  });
+}
+
 function renderOverview() {
   if (!overviewData) return;
   const stats = overviewData.stats;
@@ -159,30 +197,24 @@ function renderOverview() {
   loadAnomaly(anomalyWeeks);
 }
 
-// Navigation mirrors the account's permission groups.
+// Sidebar visibility follows the same page ids checked by the API.
 function applyPermissions(granted) {
-  // A missing list means the server predates permissions: show everything instead of an empty nav.
-  if (!Array.isArray(granted)) {
-    for (const id of ['dailyTab', 'weeklyTab', 'specialTab', 'fieldTab', 'membersTab', 'settingsTab']) {
-      const node = $(id);
-      if (node) node.hidden = false;
-    }
-    return;
-  }
-  const held = new Set(granted);
-  const needs = {dailyTab: 'schedule', weeklyTab: 'schedule', specialTab: 'schedule',
-                 fieldTab: 'field', settingsTab: 'schedule', logsTab: 'schedule'};
-  // Any of the account permissions unlocks the user-management page.
-  if ($('membersTab')) $('membersTab').hidden = !['accounts', 'accounts_manage', 'accounts_protected'].some(p => held.has(p));
+  const held = new Set(Array.isArray(granted) ? granted : []);
+  // An entry is visible when the account holds any of its permissions. 其他设置 has no
+  // page leaf of its own: either card's permission opens the page.
+  const needs = {dailyTab: ['overview'], weeklyTab: ['weekly'], specialTab: ['special'],
+    swapTab: ['swap'], fieldTab: ['field'], pushTab: ['push'], membersTab: ['members'],
+    permissionGroupsTab: ['permission_groups'], logsTab: ['logs'], dataTab: ['data'],
+    settingsTab: ['rules', 'clock', 'smtp']};
   let firstVisible = null;
-  for (const [id, permission] of Object.entries(needs)) {
+  for (const [id, permissions] of Object.entries(needs)) {
     const node = $(id);
     if (!node) continue;
-    node.hidden = !held.has(permission);
+    node.hidden = !permissions.some(permission => held.has(permission));
     if (!node.hidden && !firstVisible) firstVisible = id;
   }
   const active = document.querySelector('.ga-nav-item.active');
-  if (active && active.hidden && firstVisible) $(firstVisible).click();
+  if ((!active || active.hidden) && firstVisible) $(firstVisible).click();
 }
 
 function initOverview() {
@@ -191,6 +223,7 @@ function initOverview() {
   $('weekPrev').onclick = () => shiftWeek(-1);
   $('weekNext').onclick = () => shiftWeek(1);
   $('weekToday').onclick = () => { overviewWeek = null; loadOverview(); };
+  $('weekClear').onclick = clearVisibleWeek;
   $('closeDetail').onclick = () => $('detailDialog').close();
   window.loadOverview = loadOverview;
   window.applyPermissions = applyPermissions;
@@ -240,3 +273,24 @@ async function loadAnomaly(weeks = anomalyWeeks) {
 
 $('anomaly2').onclick = () => loadAnomaly(2);
 $('anomaly4').onclick = () => loadAnomaly(4);
+
+// Measure natural card widths even while hidden, so resizing restores the group.
+function updateStatsVisibility(group) {
+  const cards = Array.from(group.children);
+  const gap = parseFloat(getComputedStyle(group).columnGap) || 0;
+  const required = cards.reduce((width, card) => width + card.getBoundingClientRect().width, 0)
+    + Math.max(0, cards.length - 1) * gap;
+  const overflow = required > group.clientWidth + 0.5;
+  group.classList.toggle('stats-overflow', overflow);
+  group.setAttribute('aria-hidden', String(overflow));
+}
+if (typeof ResizeObserver !== 'undefined') {
+  document.querySelectorAll('.stats.overview-stats').forEach(group => {
+    const observer = new ResizeObserver(() => updateStatsVisibility(group));
+    observer.observe(group);
+    Array.from(group.children).forEach(card => observer.observe(card));
+    new MutationObserver(() => updateStatsVisibility(group)).observe(group,
+      {subtree: true, childList: true, characterData: true});
+    updateStatsVisibility(group);
+  });
+}

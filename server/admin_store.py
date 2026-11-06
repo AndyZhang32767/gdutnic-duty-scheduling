@@ -95,6 +95,16 @@ def _empty() -> dict[str, Any]:
             "app_secret": "",
             "enabled": False,
         },
+        "smtp": {
+            "host": "",
+            "port": 465,
+            "security": "ssl",
+            "username": "",
+            "password": "",
+            "from_address": "",
+            "from_name": "",
+            "enabled": False,
+        },
     }
 
 
@@ -112,6 +122,7 @@ def load() -> dict[str, Any]:
             "model": db.get_setting(conn, "model", {}) or {},
             "mcp": db.get_setting(conn, "mcp", {}) or {},
             "qq": db.get_setting(conn, "qq", {}) or {},
+            "smtp": db.get_setting(conn, "smtp", {}) or {},
         }
     dirty = False
     if not isinstance(data.get("path"), str) or len(data["path"]) != 8:
@@ -126,7 +137,10 @@ def load() -> dict[str, Any]:
     if not isinstance(data.get("qq"), dict):
         data["qq"] = {}
         dirty = True
-    for section in ("model", "mcp", "qq"):
+    if not isinstance(data.get("smtp"), dict):
+        data["smtp"] = {}
+        dirty = True
+    for section in ("model", "mcp", "qq", "smtp"):
         for key, value in _empty()[section].items():
             if key not in data[section]:
                 data[section][key] = value
@@ -144,6 +158,7 @@ def save(data: dict[str, Any]) -> None:
         db.set_setting(conn, "model", data.get("model") if isinstance(data.get("model"), dict) else {})
         db.set_setting(conn, "mcp", data.get("mcp") if isinstance(data.get("mcp"), dict) else {})
         db.set_setting(conn, "qq", data.get("qq") if isinstance(data.get("qq"), dict) else {})
+        db.set_setting(conn, "smtp", data.get("smtp") if isinstance(data.get("smtp"), dict) else {})
     _invalidate()
 
 
@@ -458,3 +473,93 @@ def save_qq(body: dict[str, Any]) -> dict[str, Any]:
         qq["enabled"] = bool(body.get("enabled"))
     save(data)
     return qq_public()
+
+
+SMTP_SECURITY = ("ssl", "starttls", "none")
+
+
+def smtp_config() -> dict[str, Any]:
+    cfg = dict(load().get("smtp") or {})
+    for key, value in _empty()["smtp"].items():
+        cfg.setdefault(key, value)
+    return cfg
+
+
+def smtp_public() -> dict[str, Any]:
+    """Never returns the stored password, only whether one is set."""
+    smtp = smtp_config()
+    password = str(smtp.get("password") or "")
+    return {
+        "host": str(smtp.get("host") or "").strip(),
+        "port": int(smtp.get("port") or 0),
+        "security": str(smtp.get("security") or "ssl"),
+        "username": str(smtp.get("username") or "").strip(),
+        "password": password,
+        "has_password": bool(password),
+        "from_address": str(smtp.get("from_address") or "").strip(),
+        "from_name": str(smtp.get("from_name") or "").strip(),
+        "enabled": bool(smtp.get("enabled")),
+    }
+
+
+def _smtp_port(value, security: str) -> int:
+    if value in (None, ""):
+        return 465 if security == "ssl" else 587 if security == "starttls" else 25
+    try:
+        port = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("端口必须是数字") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("端口应在 1～65535 之间")
+    return port
+
+
+def _looks_like_address(value: str) -> bool:
+    """Deliberately small: one @, something either side, a dot in the domain."""
+    if value.count("@") != 1:
+        return False
+    local, domain = value.split("@")
+    return bool(local and "." in domain and not domain.startswith(".") and not domain.endswith("."))
+
+
+def save_smtp(body: dict[str, Any]) -> dict[str, Any]:
+    data = load()
+    smtp = data.setdefault("smtp", _empty()["smtp"])
+    for key, value in _empty()["smtp"].items():
+        smtp.setdefault(key, value)
+    if "host" in body:
+        smtp["host"] = str(body.get("host") or "").strip()
+    if "security" in body:
+        security = str(body.get("security") or "ssl").strip().lower()
+        if security not in SMTP_SECURITY:
+            raise ValueError("加密方式只能是 SSL、STARTTLS 或 None")
+        smtp["security"] = security
+    if "port" in body or "security" in body:
+        smtp["port"] = _smtp_port(body.get("port"), str(smtp.get("security") or "ssl"))
+    if "username" in body:
+        smtp["username"] = str(body.get("username") or "").strip()
+    if "password" in body:
+        password = str(body.get("password") or "")
+        # A masked echo means "keep the stored password".
+        if password and not set(password) <= {"•"}:
+            smtp["password"] = password
+        elif password == "":
+            smtp["password"] = ""
+    if "from_address" in body:
+        address = str(body.get("from_address") or "").strip()
+        if address and not _looks_like_address(address):
+            raise ValueError("发件邮箱格式不正确")
+        smtp["from_address"] = address
+    if "from_name" in body:
+        smtp["from_name"] = str(body.get("from_name") or "").strip()
+    if "enabled" in body:
+        enabled = bool(body.get("enabled"))
+        if enabled:
+            # Refuse to enable an unusable configuration.
+            if not smtp["host"]:
+                raise ValueError("启用前请填写 SMTP 服务器地址")
+            if not _looks_like_address(str(smtp.get("from_address") or "")):
+                raise ValueError("启用前请填写正确的发件邮箱")
+        smtp["enabled"] = enabled
+    save(data)
+    return smtp_public()

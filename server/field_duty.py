@@ -1,7 +1,7 @@
 """Monthly field-duty (外勤) registrations, one record per member per month."""
 from datetime import date, datetime
 
-from server import db, schedule_store, system_clock
+from server import db, permissions, schedule_store, system_clock
 
 TABLE = 'field_duty'
 
@@ -119,8 +119,14 @@ def month_span(now=None):
     return {'first': min([*months, month]), 'last': max([*months, month]), 'current': month}
 
 
+def _eligible_accounts(conn):
+    return [row['username'] for row in conn.execute(
+        'SELECT username FROM member_accounts WHERE active=1 ORDER BY username')
+        if permissions.has(row['username'], 'member_field')]
+
+
 def overview(month=None):
-    """Every ordinary account with the month's registration state."""
+    """Accounts with member-side field access and their monthly state."""
     month = month or _month()
     with db.read() as conn:
         init(conn)
@@ -130,15 +136,19 @@ def overview(month=None):
         # Only confirmed records (status 2) count towards the monthly board.
         done = {row['username']: (row['registered_at'], bool(row['manual']))
                 for row in rows if _status(row['status']) == CONFIRMED}
-        accounts = [r['username'] for r in conn.execute(
-            'SELECT username FROM member_accounts WHERE active=1 ORDER BY username')]
+        accounts = _eligible_accounts(conn)
     items = [{'username': name, 'registered': name in done,
               'registered_at': done[name][0] if name in done else None,
               'manual': done[name][1] if name in done else False}
              for name in accounts]
     items.sort(key=lambda item: (not item['registered'], item['username']))
     span = month_span()
-    return {'month': month, 'registered': len(done), 'total': len(items), 'items': items,
+    # Deleting a month must clear pending rows too, so report every stored row, not
+    # just the confirmed ones the board counts.
+    stored = len(rows)
+    pending = sum(1 for row in rows if _status(row['status']) == PENDING)
+    return {'month': month, 'registered': sum(item['registered'] for item in items), 'total': len(items), 'items': items,
+            'stored': stored, 'pending': pending,
             'current': span['current'], 'first': span['first'], 'last': span['last'],
             'previous': _shift_month(month, -1) if month > span['first'] else None,
             'next': _shift_month(month, 1) if month < span['last'] else None}
@@ -149,6 +159,36 @@ def _shift_month(month, delta):
     first = date(int(month[:4]), int(month[5:7]), 1)
     total = first.year * 12 + first.month - 1 + delta
     return f'{total // 12:04d}-{total % 12 + 1:02d}'
+
+
+def month_summary(month=None):
+    """Counts for a month, used by the board and its delete confirmation."""
+    month = month or _month()
+    with db.read() as conn:
+        init(conn)
+        rows = conn.execute(
+            'SELECT status, COUNT(*) AS n FROM field_duty WHERE month=? GROUP BY status',
+            (month,)).fetchall()
+        accounts = _eligible_accounts(conn)
+    counts = {_status(row['status']): row['n'] for row in rows}
+    confirmed = counts.get(CONFIRMED, 0)
+    return {'month': month, 'total': len(accounts), 'registered': sum(counts.values()),
+            'pending': counts.get(PENDING, 0), 'confirmed': confirmed,
+            'none': counts.get(NONE, 0)}
+
+
+def clear_month(month=None):
+    """Delete every field-duty record for one month.
+
+    Registrations are not archival data: the board is a per-month status, so removing a
+    month simply resets it to “未登记”. Returns what was removed so the log can say so.
+    """
+    month = month or _month()
+    summary = month_summary(month)
+    with db.write() as conn:
+        init(conn)
+        deleted = conn.execute('DELETE FROM field_duty WHERE month=?', (month,)).rowcount
+    return {**summary, 'deleted': deleted}
 
 
 def set_participation(username, registered, month=None):

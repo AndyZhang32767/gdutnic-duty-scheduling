@@ -197,24 +197,70 @@ def _init_history(conn):
             " note TEXT NOT NULL, archived_at TEXT NOT NULL)")
 
 
+def _archive_and_delete(conn, where='', args=()):
+    """Copy real check-ins matching `where` into attendance_history, then delete the shifts."""
+    _init_history(conn)
+    stamp = system_clock.now().isoformat(timespec='seconds')
+    checked = conn.execute(
+        'SELECT s.day,s.start,s.end,s.location,s.note,a.name,a.checked_at'
+        ' FROM shifts s JOIN attendance a ON a.shift_id=s.id'
+        ' WHERE a.checked_at IS NOT NULL' + (' AND ' + where if where else ''),
+        args).fetchall()
+    if checked:
+        conn.executemany(
+            'INSERT INTO attendance_history'
+            '(day,start,end,name,checked_at,location,note,archived_at) VALUES(?,?,?,?,?,?,?,?)',
+            [(r['day'], r['start'], r['end'], r['name'], r['checked_at'], r['location'],
+              r['note'] or '', stamp) for r in checked])
+    deleted = conn.execute('DELETE FROM shifts' + (' WHERE ' + where if where else ''),
+                           args).rowcount
+    return deleted, len(checked)
+
+
 def clear_all():
     """Delete every schedule, archiving real check-ins so attendance history survives."""
     with db.write() as conn:
         init(conn)
-        _init_history(conn)
-        stamp = system_clock.now().isoformat(timespec='seconds')
+        deleted, archived = _archive_and_delete(conn)
+    return {'deleted': deleted, 'archived': archived}
+
+
+def clear_week(start, now=None):
+    """Delete one whole week (Monday–Sunday), archiving its check-ins."""
+    start = date.fromisoformat(str(start))
+    if start.weekday() != 0:
+        raise ValueError('请选择周一作为这一周的开始日期')
+    end = start + timedelta(days=6)
+    with db.write() as conn:
+        init(conn)
+        deleted, archived = _archive_and_delete(
+            conn, 'day>=? AND day<=?', (start.isoformat(), end.isoformat()))
+        # weekly_instances rows go with their shift through the foreign key, but SQLite
+        # may have been opened without it, so clear the stale slots explicitly.
+        conn.execute('DELETE FROM weekly_instances WHERE day>=? AND day<=?',
+                     (start.isoformat(), end.isoformat()))
+    return {'week_start': start.isoformat(), 'week_end': end.isoformat(),
+            'deleted': deleted, 'archived': archived}
+
+
+def week_summary(start):
+    """Counts shown before deleting a week: shifts, people, and real check-ins."""
+    start = date.fromisoformat(str(start))
+    end = start + timedelta(days=6)
+    with db.read() as conn:
+        init(conn)
+        row = conn.execute(
+            'SELECT COUNT(*) AS shifts FROM shifts WHERE day>=? AND day<=?',
+            (start.isoformat(), end.isoformat())).fetchone()
+        people = conn.execute(
+            'SELECT COUNT(*) AS n FROM attendance a JOIN shifts s ON s.id=a.shift_id'
+            ' WHERE s.day>=? AND s.day<=?', (start.isoformat(), end.isoformat())).fetchone()
         checked = conn.execute(
-            'SELECT s.day,s.start,s.end,s.location,s.note,a.name,a.checked_at'
-            ' FROM shifts s JOIN attendance a ON a.shift_id=s.id'
-            ' WHERE a.checked_at IS NOT NULL').fetchall()
-        if checked:
-            conn.executemany(
-                'INSERT INTO attendance_history'
-                '(day,start,end,name,checked_at,location,note,archived_at) VALUES(?,?,?,?,?,?,?,?)',
-                [(r['day'], r['start'], r['end'], r['name'], r['checked_at'], r['location'],
-                  r['note'] or '', stamp) for r in checked])
-        deleted = conn.execute('DELETE FROM shifts').rowcount
-    return {'deleted': deleted, 'archived': len(checked)}
+            'SELECT COUNT(*) AS n FROM attendance a JOIN shifts s ON s.id=a.shift_id'
+            ' WHERE s.day>=? AND s.day<=? AND a.checked_at IS NOT NULL',
+            (start.isoformat(), end.isoformat())).fetchone()
+    return {'week_start': start.isoformat(), 'week_end': end.isoformat(),
+            'shifts': row['shifts'], 'people': people['n'], 'checked': checked['n']}
 
 
 def history():

@@ -2,8 +2,8 @@
 let weeklyLoaded = false;
 const weekdays = ['周一','周二','周三','周四','周五','周六','周日'];
 function showPage(page) {
-  const pages = {daily:'dailyPage', weekly:'weeklyPage', special:'specialPage', swap:'swapPage', members:'membersPage', field:'fieldPage', settings:'settingsPage', logs:'logsPage'};
-  const tabs = {daily:'dailyTab', weekly:'weeklyTab', special:'specialTab', swap:'swapTab', members:'membersTab', field:'fieldTab', settings:'settingsTab', logs:'logsTab'};
+  const pages = {daily:'dailyPage', weekly:'weeklyPage', special:'specialPage', swap:'swapPage', members:'membersPage', field:'fieldPage', settings:'settingsPage', logs:'logsPage', data:'dataPage', permissionGroups:'permissionGroupsPage', push:'pushPage'};
+  const tabs = {daily:'dailyTab', weekly:'weeklyTab', special:'specialTab', swap:'swapTab', members:'membersTab', field:'fieldTab', settings:'settingsTab', logs:'logsTab', data:'dataTab', permissionGroups:'permissionGroupsTab', push:'pushTab'};
   for (const [key, id] of Object.entries(pages)) { $(id).hidden = key !== page; }
   for (const [key, id] of Object.entries(tabs)) { $(id).classList.toggle('active', key === page); }
 }
@@ -110,4 +110,13 @@ $('publishForm').onsubmit = async e => {
     await load();
   } catch (err) { $('weeklyStatus').textContent = err.message; }
   finally { submit.disabled = false; }
+};
+
+$('completeMembers').onclick = async () => {
+  const button = $('completeMembers'); button.disabled = true;
+  try {
+    const result = await api('/api/admin/members/provision', 'POST');
+    $('weeklyStatus').textContent = `已按已保存的排班表补全用户：新增 ${result.created} 个，已存在 ${result.existing} 个；新用户初始密码为 gg2017。`;
+  } catch (err) { $('weeklyStatus').textContent = err.message; }
+  finally { button.disabled = false; }
 };

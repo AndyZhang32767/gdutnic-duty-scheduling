@@ -18,6 +18,23 @@ class TestOverview(unittest.TestCase):
             clock.now.return_value = at
             schedule_store.check_in(sid, name)
 
+    def test_generated_week_keeps_original_slot_when_first_shift_is_empty(self):
+        from server import weekly_store
+        roster = {'needs_review': False, 'slots': [
+            {'start': start, 'end': end, 'days': [(['甲'] if i == 0 and day == 0
+                else ['乙'] if i > 0 and day == 3 else []) for day in range(7)]}
+            for i, (start, end) in enumerate([
+                ('08:30', '10:15'), ('10:15', '12:00'),
+                ('13:30', '15:15'), ('15:15', '17:00')])]}
+        weekly_store.save(roster)
+        weekly_store.publish('2026-11-09')
+        data = overview.overview('2026-11', now=self.now, week='2026-11-09')
+        monday = data['week']['days'][0]['shifts']
+        thursday = data['week']['days'][3]['shifts']
+        self.assertEqual([s['weekly_slot'] for s in monday], [0])
+        self.assertEqual([s['weekly_slot'] for s in thursday], [1, 2, 3])
+        self.assertEqual([s['start'] for s in thursday], ['10:15', '13:30', '15:15'])
+
     def test_normal_late_absent_and_rate(self):
         now = datetime(2026, 11, 3, 12, 30, tzinfo=schedule_store.TZ)
         on_time = self.make('2026-11-02', '08:30', '10:00', ['甲'])
@@ -183,3 +200,54 @@ class TestOverviewWeekNavigation(unittest.TestCase):
         with self.assertRaises(ValueError):
             overview.overview('2026-11', now=datetime(2026, 11, 5, 12, 0, tzinfo=schedule_store.TZ),
                               week='not-a-day')
+
+
+class TestWeekBulkOperations(unittest.TestCase):
+    setUp = test_schedule.ScheduleTest.setUp
+    tearDown = test_schedule.ScheduleTest.tearDown
+
+    def make(self, day, start='09:00', end='10:00', names=('甲',)):
+        return schedule_store.save(dict(day=day, start=start, end=end, members=list(names)))
+
+    def test_week_summary_counts_shifts_people_and_check_ins(self):
+        first = self.make('2026-11-02', names=['甲', '乙'])
+        second = self.make('2026-11-04')
+        self.make('2026-11-09')  # next week must not count
+        with patch.object(schedule_store, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 11, 2, 9, 2, tzinfo=schedule_store.TZ)
+            schedule_store.check_in(first, '甲')
+        summary = schedule_store.week_summary('2026-11-02')
+        assert summary['week_start'] == '2026-11-02' and summary['week_end'] == '2026-11-08'
+        assert summary['shifts'] == 2
+        assert summary['people'] == 3
+        assert summary['checked'] == 1
+        assert second
+
+    def test_clear_week_archives_check_ins_and_leaves_other_weeks(self):
+        kept = self.make('2026-11-09')
+        gone = self.make('2026-11-03', names=['张三'])
+        with patch.object(schedule_store, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 11, 3, 9, 2, tzinfo=schedule_store.TZ)
+            schedule_store.check_in(gone, '张三')
+        result = schedule_store.clear_week('2026-11-02')
+        assert result == {'week_start': '2026-11-02', 'week_end': '2026-11-08',
+                          'deleted': 1, 'archived': 1}
+        days = {row['day'] for row in schedule_store.list_day('2026-11-09')}
+        assert days == {'2026-11-09'}, kept
+        assert schedule_store.week_summary('2026-11-02')['shifts'] == 0
+        archived = schedule_store.history()
+        assert [(row['day'], row['name']) for row in archived] == [('2026-11-03', '张三')]
+
+    def test_clear_week_rejects_a_non_monday(self):
+        with self.assertRaises(ValueError):
+            schedule_store.clear_week('2026-11-04')
+
+    def test_clear_week_tolerates_an_empty_week(self):
+        result = schedule_store.clear_week('2026-11-02')
+        assert result['deleted'] == 0 and result['archived'] == 0
+
+    def test_overview_week_reports_its_totals(self):
+        self.make('2026-11-02', names=['甲', '乙'])
+        now = datetime(2026, 11, 2, 12, 0, tzinfo=schedule_store.TZ)
+        week = overview.overview('2026-11', now=now)['week']
+        assert week['shifts'] == 1 and week['people'] == 2 and week['checked'] == 0

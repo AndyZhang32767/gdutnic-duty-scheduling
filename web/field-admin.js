@@ -1,6 +1,8 @@
 // Admin field-duty board: who registered this month and who has not.
 // The month is tracked in JS like the overview's week; there is no month input.
 let fieldMonth = today().slice(0, 7);
+// How many records the visible month holds, for the delete confirmation.
+let fieldClearCount = 0;
 
 function fieldCard(item, month) {
   const card = el('article', `field-person ${item.registered ? 'done' : 'missing'} clickable`);
@@ -55,6 +57,12 @@ async function loadFieldBoard() {
     $('fieldPrev').title = data.previous ? `上个月（${data.previous}）` : '已到最早月份';
     $('fieldNext').title = data.next ? `下个月（${data.next}）` : '已到最晚月份';
     $('fieldToday').hidden = isCurrent;
+    // Any stored row — confirmed or still waiting — can be cleared.
+    $('fieldClear').disabled = !data.stored;
+    $('fieldClear').title = data.stored
+      ? `删除 ${monthLabel(data.month)}（${data.stored} 条记录）`
+      : `${monthLabel(data.month)}没有外勤记录`;
+    fieldClearCount = data.stored;
     fieldMonth = data.month;
     const board = $('fieldBoard');
     board.replaceChildren();
@@ -78,3 +86,21 @@ $('fieldTab').onclick = () => { showPage('field'); loadFieldBoard(); };
 $('fieldPrev').onclick = () => shiftFieldMonth(-1);
 $('fieldNext').onclick = () => shiftFieldMonth(1);
 $('fieldToday').onclick = () => { fieldMonth = today().slice(0, 7); loadFieldBoard(); };
+
+// Reset one whole month of field-duty records; this is a status, not an archive.
+$('fieldClear').onclick = () => {
+  if (!fieldClearCount) return;
+  const month = fieldMonth;
+  const phrase = '删除本月外勤';
+  openRangeClear({
+    title: '确认删除整月外勤',
+    phrase,
+    body: `将删除 ${monthLabel(month)}的 ${fieldClearCount} 条外勤记录，`
+      + '相关人员回到“未登记”，需要重新登记并由他人确认。此操作不写入归档，无法撤销。',
+    submit: () => api(`/api/admin/field-duty/month?month=${encodeURIComponent(month)}`, 'DELETE'),
+    onDone: async () => {
+      await loadFieldBoard();
+      $('fieldAdminStatus').textContent = `已删除 ${monthLabel(month)}的外勤记录。`;
+    },
+  });
+};
