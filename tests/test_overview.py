@@ -18,6 +18,17 @@ class TestOverview(unittest.TestCase):
             clock.now.return_value = at
             schedule_store.check_in(sid, name)
 
+    def test_distant_month_and_week_skip_intervening_shifts(self):
+        self.make('2026-11-02', '09:00', '12:00', ['周内'])
+        self.make('2026-12-01', '09:00', '12:00', ['间隔'])
+        self.make('2027-02-01', '09:00', '12:00', ['月内'])
+        with patch.object(overview, '_shift_payload', wraps=overview._shift_payload) as payload:
+            data = overview.overview('2027-02', now=self.now, week='2026-11-02')
+        self.assertNotIn('2026-12-01', [call.args[1]['day'] for call in payload.call_args_list])
+        self.assertEqual(data['stats']['total'], 0)
+        self.assertEqual(data['week']['shifts'], 1)
+        self.assertEqual(data['week']['days'][0]['shifts'][0]['members'][0]['name'], '周内')
+
     def test_generated_week_keeps_original_slot_when_first_shift_is_empty(self):
         from server import weekly_store
         roster = {'needs_review': False, 'slots': [

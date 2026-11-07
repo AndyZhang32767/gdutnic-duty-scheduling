@@ -107,12 +107,20 @@ def _usage_bytes(conn) -> int:
 
 def _evict_oldest(conn, max_mb: int) -> None:
     limit = max_mb * 1024 * 1024
-    while _usage_bytes(conn) > limit:
+    # Called inside a write transaction: subtract each deletion rather than
+    # rescanning all remaining message content after every evicted session.
+    used = _usage_bytes(conn)
+    while used > limit:
         row = conn.execute(
-            "SELECT visitor_id, id FROM chats ORDER BY updated_at ASC, id ASC LIMIT 1"
+            "SELECT visitor_id, id, LENGTH(title) + LENGTH(id) + LENGTH(visitor_id) AS size "
+            "FROM chats ORDER BY updated_at ASC, id ASC LIMIT 1"
         ).fetchone()
         if not row:
             break
+        messages = conn.execute(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) AS size FROM messages "
+            "WHERE visitor_id = ? AND chat_id = ?", (row["visitor_id"], row["id"])
+        ).fetchone()
         conn.execute(
             "DELETE FROM chats WHERE visitor_id = ? AND id = ?",
             (row["visitor_id"], row["id"]),
@@ -125,6 +133,7 @@ def _evict_oldest(conn, max_mb: int) -> None:
             """,
             (row["visitor_id"],),
         )
+        used -= int(row["size"]) + int(messages["size"])
 
 
 def _session_from_row(conn, row) -> dict[str, Any]:
@@ -205,17 +214,19 @@ def save_visitor_chats(visitor_id: str, sessions: list[Any], current_id: str | N
                     session["userTheme"]["ink"],
                 ),
             )
-            for seq, message in enumerate(session["messages"]):
-                conn.execute(
-                    "INSERT INTO messages(visitor_id, chat_id, seq, role, content) VALUES(?, ?, ?, ?, ?)",
+            conn.executemany(
+                "INSERT INTO messages(visitor_id, chat_id, seq, role, content) VALUES(?, ?, ?, ?, ?)",
+                (
                     (
                         visitor_id,
                         session["id"],
                         seq,
                         message["role"],
                         json.dumps(message.get("content"), ensure_ascii=False),
-                    ),
-                )
+                    )
+                    for seq, message in enumerate(session["messages"])
+                ),
+            )
         _evict_oldest(conn, _max_mb(conn))
 
 
@@ -286,8 +297,11 @@ def list_all() -> list[dict[str, Any]]:
 
 
 def get_session(visitor_id: str, chat_id: str) -> dict[str, Any] | None:
-    packed = load_visitor_chats(visitor_id)
-    for session in packed["sessions"]:
-        if isinstance(session, dict) and str(session.get("id")) == chat_id:
-            return session
-    return None
+    visitor_id = (visitor_id or "").strip()
+    with db.read() as conn:
+        row = conn.execute(
+            "SELECT visitor_id, id, title, updated_at, theme_bg, theme_ink "
+            "FROM chats WHERE visitor_id = ? AND id = ?",
+            (visitor_id, chat_id),
+        ).fetchone()
+        return _session_from_row(conn, row) if row else None

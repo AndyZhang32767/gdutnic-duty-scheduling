@@ -122,8 +122,6 @@ def overview(month=None, now=None, week=None):
     first, last = _month_bounds(month or now.strftime('%Y-%m'))
     week_start = parse_week(week, now)
     week_end = week_start + timedelta(days=6)
-    range_start = min(first, week_start)
-    range_end = max(last, week_end)
 
     normal = late = absent = total = 0
     month_items = []
@@ -133,8 +131,10 @@ def overview(month=None, now=None, week=None):
         rows = conn.execute(
             'SELECT s.*,w.slot AS weekly_slot FROM shifts s '
             'LEFT JOIN weekly_instances w ON w.shift_id=s.id '
-            'WHERE s.day>=? AND s.day<=? ORDER BY s.day,s.start,s.id',
-            (range_start.isoformat(), range_end.isoformat())).fetchall()
+            'WHERE (s.day>=? AND s.day<=?) OR (s.day>=? AND s.day<=?) '
+            'ORDER BY s.day,s.start,s.id',
+            (first.isoformat(), last.isoformat(),
+             week_start.isoformat(), week_end.isoformat())).fetchall()
         attendance = _attendance_by_shift(conn, rows)
         for row in rows:
             item = _shift_payload(conn, row, now, rules, attendance)
