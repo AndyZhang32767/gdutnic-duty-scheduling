@@ -238,6 +238,8 @@ docker compose --env-file data/.env up -d --wait mysql
 
 Windows 使用 `start.bat`。启动脚本会创建项目内 `.venv`、安装依赖（默认 PyPI 失败时自动尝试国内镜像），初始化 `data/` 并读取 `data/.env`，然后监听 `0.0.0.0:50025`。手动运行 uvicorn 或维护命令也会初始化目录。初始化不会重置现有数据库、密码或配置。
 
+启动脚本会先检查数据库，失败时停止并显示连接地址及处理方法。若出现 `Connection refused`，说明配置的数据库地址/端口未接受连接；本地 Docker 部署请先打开 Docker Desktop（Linux 启动 Docker 服务），执行 `docker compose --env-file data/.env up -d --wait mysql`，再启动应用。可单独运行 `.venv/bin/python -m server.check_database` 检查连接（Windows 使用 `.venv\Scripts\python.exe`）。检查会执行应用原有的建表/升级流程，不重置现有数据；不会自动切换数据库。
+
 手动启动：
 
 ```bash

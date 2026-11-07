@@ -202,7 +202,12 @@ def connect():
             try:
                 conn = MysqlConnection(pymysql.connect(**options))
             except pymysql.MySQLError as exc:
-                raise RuntimeError("MySQL 连接失败，请检查 data/.env 中的 MYSQL_* 配置和数据库服务") from exc
+                message = (f"MySQL 连接失败（{options['host']}:{options['port']}），"
+                           "请检查 data/.env 中的 MYSQL_* 配置和数据库服务。")
+                if exc.args and exc.args[0] in (2002, 2003) and options['host'] in ('127.0.0.1', 'localhost', '::1'):
+                    message += (" 使用项目自带 MySQL 时，请先启动 Docker Desktop / Docker 服务，"
+                                "然后执行 docker compose --env-file data/.env up -d --wait mysql")
+                raise RuntimeError(message) from exc
             try:
                 schema = (ROOT / "sql" / "mysql_schema.sql").read_text(encoding="utf-8")
                 for statement in schema.split(";"):
