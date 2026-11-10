@@ -239,7 +239,7 @@ docker compose --env-file data/.env up -d --wait mysql
 
 ### GDUTNIC 单点登录
 
-SSO 默认关闭。管理员在「其他设置 → SSO 设置」（需要独立的「SSO 设置」权限，原始管理员始终可访问）填写身份提供方地址、客户端标识、客户端类型与密钥、精确的登录回调地址，然后打开「在登录页显示 SSO」并保存，两个登录页立即出现「通过GDUTNIC」，无需重启。
+SSO 默认关闭，且身份提供方地址默认为空：本应用不带任何组织专属地址，需由管理员自行填写。管理员在「其他设置 → SSO 设置」（需要独立的「SSO 设置」权限，原始管理员始终可访问）填写身份提供方地址、客户端标识、客户端类型与密钥、精确的登录回调地址，然后打开「在登录页显示 SSO」并保存，两个登录页立即出现「通过GDUTNIC」，无需重启。
 
 - 使用授权码 + PKCE；服务端校验 `iss`、`aud`、`exp`、`nonce` 与 `azp`，签名密钥只从该 issuer 的 JWKS 获取，元数据端点必须与 issuer 同源。
 - 账号绑定以 `issuer + sub` 为准，不依赖显示名称。没有匹配记录时跳到绑定页，需要输入本地账号的密码才能完成首次绑定；原始管理员首次绑定也必须验证本地密码。
@@ -272,7 +272,7 @@ SSO 默认关闭。管理员在「其他设置 → SSO 设置」（需要独立�
 | `MYSQL_SSL_CA` | 远程 TLS 证书路径（可选） | — |
 | `SESSION_SECRET` | 会话签名密钥（可选，缺省写入 `data/session_secret.txt`） | — |
 | `SESSION_HTTPS_ONLY` | 设为 `1/true/yes` 时 Cookie 仅经 HTTPS 发送并启用 HSTS | 关闭 |
-| `KEYCLOAK_ENABLED` / `KEYCLOAK_ISSUER` / `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` / `KEYCLOAK_REDIRECT_URI` / `KEYCLOAK_USERNAME_CLAIM` | GDUTNIC 单点登录的环境变量回退；后台「SSO 设置」保存过配置后以数据库为准。必须显式 `KEYCLOAK_ENABLED=true` 才启用 | 关闭 |
+| `KEYCLOAK_ENABLED` / `KEYCLOAK_ISSUER` / `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` / `KEYCLOAK_REDIRECT_URI` / `KEYCLOAK_USERNAME_CLAIM` | GDUTNIC 单点登录的环境变量回退；后台「SSO 设置」保存过配置后以数据库为准。必须显式 `KEYCLOAK_ENABLED=true` 才启用；地址等字段默认留空，需自行填写 | 关闭、字段为空 |
 
 `.env.example` 中列出了上述 SSO 变量的占位值。管理员在「其他设置 → SSO 设置」保存的配置优先于环境变量。
 

@@ -14,7 +14,7 @@ def load():
         return {'enabled': False, **{k: '' for k in FIELDS}, **saved}
     return {
         'enabled': os.getenv('KEYCLOAK_ENABLED', '').lower() in {'1', 'true', 'yes'},
-        'issuer': os.getenv('KEYCLOAK_ISSUER', 'https://sso.gdutnic.com/realms/nic'),
+        'issuer': os.getenv('KEYCLOAK_ISSUER', ''),
         'client_id': os.getenv('KEYCLOAK_CLIENT_ID', ''),
         'client_type': 'confidential' if os.getenv('KEYCLOAK_CLIENT_SECRET') else 'public',
         'secret': os.getenv('KEYCLOAK_CLIENT_SECRET', ''),

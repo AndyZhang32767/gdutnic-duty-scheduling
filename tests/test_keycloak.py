@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 import time
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -226,6 +227,26 @@ class KeycloakTest(PermissionFixture):
         with patch.dict(os.environ, {'KEYCLOAK_ENABLED': ''}):
             self.assertFalse(self.client.get('/api/auth/keycloak/status').json()['enabled'])
             self.assertEqual(self.client.get('/api/auth/keycloak/start', follow_redirects=False).status_code, 503)
+
+    def test_a_fresh_checkout_ships_no_identity_provider_address(self):
+        """No organisation-specific default: a new deployment must type its own issuer."""
+        from server import sso_settings
+        keys = ('KEYCLOAK_ENABLED', 'KEYCLOAK_ISSUER', 'KEYCLOAK_CLIENT_ID',
+                'KEYCLOAK_CLIENT_SECRET', 'KEYCLOAK_REDIRECT_URI', 'KEYCLOAK_USERNAME_CLAIM')
+        with patch.dict(os.environ, {key: '' for key in keys}):
+            with db.write() as conn:
+                conn.execute("DELETE FROM settings WHERE `key`=?", (sso_settings.KEY,))
+            value = sso_settings.load()
+            public = sso_settings.public()
+        self.assertEqual(value['issuer'], '')
+        self.assertEqual(public['issuer'], '')
+        self.assertFalse(value['enabled'])
+        # And it still refuses to switch on without an address.
+        with self.assertRaises(ValueError):
+            sso_settings.validate(value, require_complete=True)
+        # The shipped template must not carry an address either.
+        template = (Path(__file__).resolve().parent.parent / '.env.example').read_text(encoding='utf-8')
+        self.assertIn('KEYCLOAK_ISSUER=\n', template)
 
     def test_admin_settings_are_live_and_override_environment(self):
         client = self.settings_client()
