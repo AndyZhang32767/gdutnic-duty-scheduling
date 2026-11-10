@@ -386,8 +386,8 @@ MySQL 集成测试使用 `data/.env` 中的本地服务与 root 凭证，每个�
 
 ## 版本与 Git 使用
 
-- 远端：`origin` → `https://github.com/AndyZhang32767/gdutnic-outline-assistant.git`
-- 分支：`main` 为已发布的稳定版本；`dev` 为当前开发分支，新功能先进入 `dev`，验证后再合并到 `main`。截图、日志、`data/` 等运行时产物都不提交。
+- 远端：`origin` → `https://github.com/AndyZhang32767/gdutnic-duty-scheduling.git`
+- 分支：`master` 为已发布的稳定版本；`dev` 为当前开发分支，新功能先进入 `dev`，验证后再合并到 `master`。仓库里另有一个早期快照分支 `v0.1`，仅作留档。截图、日志、`data/` 等运行时产物都不提交。
 - 更新本地代码前先停止正在运行的应用，避免启动脚本升级数据库时与运行中的进程冲突：
 
 ```bash
@@ -400,9 +400,9 @@ bash start.sh          # Windows 用 start.bat
 
 ```bash
 git status
-git diff                          # 未暂存的改动
-git log --oneline --graph -10     # 最近提交
-git log origin/main..dev --stat   # dev 相对 main 多了哪些改动
+git diff                            # 未暂存的改动
+git log --oneline --graph -10       # 最近提交
+git log origin/master..dev --stat   # dev 相对 master 多了哪些改动
 ```
 
 - 提交与推送：
@@ -410,16 +410,16 @@ git log origin/main..dev --stat   # dev 相对 main 多了哪些改动
 ```bash
 git add -A
 git commit -m "简短说明改动内容"
-git push                          # dev 已跟踪 origin/dev
+git push                            # dev 已跟踪 origin/dev
 ```
 
-- 把 `dev` 的改动发布到 `main`：
+- 把 `dev` 的改动发布到 `master`：
 
 ```bash
-git switch main
+git switch master
 git pull --ff-only
 git merge --no-ff dev
-git push origin main
+git push origin master
 ```
 
 - 提交信息沿用现有风格：一行祈使句标题（中文或英文均可），需要时在正文按模块列出关键改动与影响，并注明测试结果。
