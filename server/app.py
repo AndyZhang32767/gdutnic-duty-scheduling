@@ -5,6 +5,7 @@ import asyncio
 from contextlib import suppress
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
-from server import admin_store, chat_store, data_admin, db, duty_settings, field_duty, mailer, operation_log, overview, permissions, push_reports, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
+from server import attendance_live, checkin_access, session_policy, admin_store, chat_store, data_admin, db, duty_settings, field_duty, mailer, operation_log, overview, permissions, push_reports, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
 from server.mcp_client import McpError, OutlineMcpClient, normalize_mcp_url
 from server.oauth import exchange_code, start_oauth
 
@@ -75,12 +76,14 @@ async def lifespan(_app: FastAPI):
     if admin_store.qq_config().get('enabled'):
         await _qq_bot().sync()
     push_task = asyncio.create_task(push_reports.worker())
+    presence_task = asyncio.create_task(session_policy.presence_worker())
     try:
         yield
     finally:
-        push_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await push_task
+        for task in (push_task, presence_task):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
     if admin_store.qq_config().get('enabled'):
         await _qq_bot().stop()
 
@@ -107,12 +110,17 @@ app.add_middleware(
 )
 
 ADMIN_LIMITER = security.AttemptLimiter()
-MEMBER_LIMITER = security.AttemptLimiter()
+ACCOUNT_LIMITER = security.AttemptLimiter()
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    if request.url.path in {'/api/attendance/live', '/api/session/heartbeat'}:
+        # These read-only requests may finish after a logout/login in another tab.
+        # Do not let their old session snapshot replace the browser's newer cookie.
+        response.raw_headers = [(key, value) for key, value in response.raw_headers
+                                if not (key.lower() == b'set-cookie' and value.startswith(b'gdutnic_wiki='))]
 
     # Credentials must never leak through a referrer or be framed for clickjacking.
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -139,8 +147,8 @@ def _admin_signer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(_session_secret(), salt="gdutnic-admin")
 
 
-def _set_admin_cookie(response: JSONResponse, username: str) -> None:
-    token = _admin_signer().dumps({"u": username})
+def _set_admin_cookie(response: JSONResponse, username: str, session_id: str, *, version: str | None = None) -> None:
+    token = _admin_signer().dumps({"u": username, "v": version if version is not None else member_store.session_version(username), "sid": session_id})
     response.set_cookie(
         ADMIN_COOKIE,
         token,
@@ -165,7 +173,10 @@ def _admin_from_cookie(request: Request) -> str:
     except (BadSignature, Exception):
         return ""
     name = str(data.get("u") or "").strip()
-    if name and (root_admin.is_root(name) or name in admin_store.usernames()):
+    if (name and member_store.session_valid(name, data.get("v"), use_cache=False)
+            and session_policy.state(data.get("sid"), "admin", name)):
+        request.state.admin_session_id = data["sid"]
+        request.state.admin_session_version = data["v"]
         return name
     return ""
 
@@ -219,18 +230,21 @@ async def index():
 
 
 def _resolve_mcp_url(request: Request, body: dict[str, Any] | None = None) -> str:
-    body = body or {}
-    admin = admin_store.mcp_url()
-    if admin:
-        return admin
-    return ((body.get("mcp_url") or "") or request.session.get("mcp_url") or "").strip()
+    # Only the administrator-controlled destination is trusted. Old signed
+    # sessions may contain URLs originally supplied by anonymous clients.
+    return admin_store.mcp_url()
+
+
+def _require_mcp_user(request: Request) -> None:
+    if not _admin_ok(request):
+        _require_member(request)
 
 
 @app.get("/api/defaults")
 async def defaults(request: Request) -> dict[str, Any]:
     session = request.session
     return {
-        "mcp_url": admin_store.mcp_url() or session.get("mcp_url") or "",
+        "mcp_url": admin_store.mcp_url() or "",
         "has_outline_token": bool(session.get("outline_token") or session.get("mcp_api_key")),
         "oauth_connected": bool(session.get("outline_token")),
     }
@@ -238,8 +252,9 @@ async def defaults(request: Request) -> dict[str, Any]:
 
 @app.post("/api/settings")
 async def save_settings(request: Request) -> dict[str, Any]:
+    _require_mcp_user(request)
     body = await request.json()
-    raw = (body.get("mcp_url") or "").strip()
+    raw = _resolve_mcp_url(request)
     if raw:
         request.session["mcp_url"] = normalize_mcp_url(raw)
     api_key = (body.get("mcp_api_key") or "").strip()
@@ -247,11 +262,12 @@ async def save_settings(request: Request) -> dict[str, Any]:
         request.session["mcp_api_key"] = api_key
     if body.get("clear_mcp_api_key"):
         request.session.pop("mcp_api_key", None)
-    return {"ok": True, "mcp_url": request.session["mcp_url"]}
+    return {"ok": True, "mcp_url": request.session.get("mcp_url", "")}
 
 
 @app.post("/api/mcp/connect")
 async def mcp_connect(request: Request) -> dict[str, Any]:
+    _require_mcp_user(request)
     body = await request.json()
     raw = _resolve_mcp_url(request, body)
     if not raw:
@@ -275,16 +291,17 @@ async def mcp_connect(request: Request) -> dict[str, Any]:
             }
     except McpError as exc:
         print(f"[mcp_connect] {exc} payload={exc.payload!r}")
-        status = exc.status if exc.status and 400 <= exc.status < 600 else 502
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        status = 401 if exc.status == 401 else 502
+        raise HTTPException(status_code=status, detail="MCP 连接失败，请检查配置或重新登录") from exc
     except Exception as exc:
         print(f"[mcp_connect] {type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=502, detail=f"MCP 连接失败: {type(exc).__name__}: {exc}") from exc
+        raise HTTPException(status_code=502, detail="MCP 连接失败，请检查配置或重新登录") from exc
 
 
 @app.get("/api/mcp/oauth/start")
 async def oauth_start(request: Request, mcp_url: str | None = None):
-    raw = (admin_store.mcp_url() or mcp_url or request.session.get("mcp_url") or "").strip()
+    _require_mcp_user(request)
+    raw = _resolve_mcp_url(request)
     if not raw:
         return _oauth_popup_result("missing_url")
     mcp_url = normalize_mcp_url(raw)
@@ -293,7 +310,7 @@ async def oauth_start(request: Request, mcp_url: str | None = None):
         flow = await start_oauth(mcp_url, redirect_uri)
     except Exception as exc:
         print(f"[oauth_start] {type(exc).__name__}: {exc}")
-        return _oauth_popup_result("start", str(exc))
+        return _oauth_popup_result("start", "企业登录暂时不可用")
     flow["redirect_uri"] = redirect_uri
     request.session["oauth_flow"] = flow
     request.session["mcp_url"] = mcp_url
@@ -302,6 +319,7 @@ async def oauth_start(request: Request, mcp_url: str | None = None):
 
 @app.get("/api/mcp/oauth/callback")
 async def oauth_callback(request: Request, code: str | None = None, state: str | None = None) -> HTMLResponse:
+    _require_mcp_user(request)
     flow = request.session.get("oauth_flow") or {}
     if not code or not flow:
         return _oauth_popup_result("missing")
@@ -318,7 +336,7 @@ async def oauth_callback(request: Request, code: str | None = None, state: str |
             mcp_url=flow["mcp_url"],
         )
     except Exception as exc:
-        return _oauth_popup_result("token", str(exc))
+        return _oauth_popup_result("token", "企业登录暂时不可用")
     request.session["outline_token"] = (
         tokens.get("access_token")
         or (tokens.get("data") or {}).get("access_token")
@@ -350,6 +368,7 @@ async def oauth_callback(request: Request, code: str | None = None, state: str |
 
 @app.post("/api/mcp/restore")
 async def mcp_restore(request: Request) -> dict[str, bool]:
+    _require_mcp_user(request)
     body = await request.json()
     token = (body.get("outline_token") or "").strip()
     if not token:
@@ -358,7 +377,7 @@ async def mcp_restore(request: Request) -> dict[str, bool]:
     refresh = (body.get("outline_refresh") or "").strip()
     if refresh:
         request.session["outline_refresh"] = refresh
-    raw = (body.get("mcp_url") or "").strip()
+    raw = _resolve_mcp_url(request)
     if raw:
         request.session["mcp_url"] = normalize_mcp_url(raw)
     return {"ok": True}
@@ -373,6 +392,7 @@ async def mcp_logout(request: Request) -> dict[str, bool]:
 
 @app.post("/api/chat")
 async def chat(request: Request) -> StreamingResponse:
+    _require_mcp_user(request)
     body = await request.json()
     raw = _resolve_mcp_url(request, body)
     if not raw:
@@ -418,9 +438,9 @@ async def chat(request: Request) -> StreamingResponse:
                 ):
                     yield _sse(event)
         except McpError as exc:
-            yield _sse({"type": "error", "message": str(exc)})
+            yield _sse({"type": "error", "message": "服务请求失败，请稍后重试"})
         except Exception as exc:
-            yield _sse({"type": "error", "message": str(exc)})
+            yield _sse({"type": "error", "message": "服务请求失败，请稍后重试"})
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
@@ -552,7 +572,15 @@ def _session_account(request: Request) -> str:
     if not request.session.get("admin_ok"):
         return ""
     name = str(request.session.get("admin_username") or "").strip()
-    return name if name and permissions.is_admin(name) else ""
+    version = request.session.get("admin_version")
+    if (name and member_store.session_valid(name, version, use_cache=False)
+            and session_policy.state(request.session.get("admin_sid"), "admin", name)
+            and permissions.is_admin(name)):
+        request.state.admin_session_id = request.session["admin_sid"]
+        request.state.admin_session_version = version
+        return name
+    return ""
+
 
 
 def _admin_ok(request: Request) -> bool:
@@ -569,7 +597,11 @@ def _require_permission(request: Request, permission: str) -> str:
     name = _session_account(request)
     if not name:
         raise HTTPException(status_code=401, detail="请先登录管理员")
-    if not permissions.has(name, permission):
+    # Legacy model/MCP settings routes retain their original authorization even
+    # though the settings sidebar now also contains SSO and network controls.
+    allowed = (any(permissions.has(name, key) for key in ('rules', 'clock', 'smtp'))
+               if permission == 'settings' else permissions.has(name, permission))
+    if not allowed:
         raise HTTPException(status_code=403, detail="当前账号没有此权限")
     return name
 
@@ -644,9 +676,11 @@ async def admin_register(request: Request) -> dict[str, Any]:
     username = root_admin.username()
     request.session["admin_ok"] = True
     request.session["admin_username"] = username
+    request.session["admin_version"] = member_store.session_version(username)
+    request.session["admin_sid"] = session_policy.create("admin", username)
     _log(username, '创建原始管理员', '首次注册，凭据保存于 data/root_admin.json')
     response = JSONResponse({"ok": True, "username": username})
-    _set_admin_cookie(response, username)
+    _set_admin_cookie(response, username, request.session["admin_sid"])
     return response
 
 
@@ -656,44 +690,59 @@ async def admin_login(request: Request) -> JSONResponse:
         raise HTTPException(status_code=403, detail="请从控制台提示的管理员网址进入")
     key = "admin:" + security.client_key(request)
     if ADMIN_LIMITER.blocked(key):
-        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
+        raise HTTPException(status_code=429, detail="管理员登录尝试过于频繁，请在限制开始 10 分钟后重试")
     body = await request.json()
     username = str(body.get("username") or "").strip()
     password = str(body.get("password") or "")
+    account_key = "admin:" + username.casefold()
+    if ACCOUNT_LIMITER.blocked(account_key):
+        raise HTTPException(status_code=429, detail="管理员登录尝试过于频繁，请在限制开始 10 分钟后重试")
     # The 原始管理员 authenticates against its own file, never the account table.
     if root_admin.is_root(username):
         if not root_admin.verify(password):
             ADMIN_LIMITER.fail(key)
+            ACCOUNT_LIMITER.fail(account_key)
             raise HTTPException(status_code=401, detail="用户名或密码不正确")
         ADMIN_LIMITER.reset(key)
+        ACCOUNT_LIMITER.reset(account_key)
         _log(username, '登录管理端')
         request.session["admin_ok"] = True
         request.session["admin_username"] = username
+        request.session["admin_version"] = member_store.session_version(username)
+        request.session["admin_sid"] = session_policy.create("admin", username)
         response = JSONResponse({"ok": True, "username": username})
-        _set_admin_cookie(response, username)
+        _set_admin_cookie(response, username, request.session["admin_sid"])
         return response
     version = member_store.authenticate(username, password)
     if not version:
         ADMIN_LIMITER.fail(key)
+        ACCOUNT_LIMITER.fail(account_key)
         raise HTTPException(status_code=401, detail="用户名或密码不正确")
     # Administrator pages are open to any account with at least one admin permission.
     if not permissions.is_admin(username):
         ADMIN_LIMITER.fail(key)
+        ACCOUNT_LIMITER.fail(account_key)
         raise HTTPException(status_code=403, detail="该账号没有管理员权限")
     ADMIN_LIMITER.reset(key)
+    ACCOUNT_LIMITER.reset(account_key)
     _log(username, '登录管理端')
     request.session["admin_ok"] = True
     request.session["admin_username"] = username
+    request.session["admin_version"] = member_store.session_version(username)
+    request.session["admin_sid"] = session_policy.create("admin", username)
     response = JSONResponse({"ok": True, "username": username})
-    _set_admin_cookie(response, username)
+    _set_admin_cookie(response, username, request.session["admin_sid"])
     return response
 
 
 @app.post("/api/admin/logout")
 async def admin_logout(request: Request) -> JSONResponse:
     _log(_admin_username(request), '退出管理端')
+    session_policy.revoke(getattr(request.state, 'admin_session_id', None))
+    session_policy.revoke(request.session.pop('admin_sid', None))
     request.session.pop("admin_ok", None)
     request.session.pop("admin_username", None)
+    request.session.pop("admin_version", None)
     response = JSONResponse({"ok": True})
     _clear_admin_cookie(response)
     return response
@@ -1010,14 +1059,17 @@ async def member_schedule_list(request: Request, week: str = ""):
 
 
 @app.get("/api/schedules")
+@app.get("/api/member/schedules")
 async def schedules_get(request: Request, day: str):
-    name = None if _admin_ok(request) else _require_member_permission(request, "duty")
+    name = (_require_member(request) if request.url.path == "/api/member/schedules"
+            else None if _admin_ok(request) else _require_member_permission(request, "duty"))
     if name is None:
         _require_permission(request, "overview")
     try:
         return {
             "items": schedule_store.list_day(day, name),
             "rules": duty_settings.load() if name is not None else None,
+            "network_access": checkin_access.status(security.client_key(request)),
             "now": system_clock.public(),
         }
     except ValueError as exc:
@@ -1078,6 +1130,7 @@ async def admin_rules_save(request: Request):
 @app.post("/api/schedules/{shift_id}/check-in")
 async def schedule_check_in(shift_id: int, request: Request):
     name = _require_member_permission(request, "duty")
+    _require_checkin_network(request, "checkin")
     try:
         stamp, chained = schedule_store.check_in_with_chain(shift_id, name)
         _log(name, '到岗签到',
@@ -1155,7 +1208,7 @@ async def special_schedule_update(shift_id: int, request: Request):
     _require_permission(request, "special")
     body = await request.json()
     try:
-        schedule_store.save({**body, "special": True}, shift_id)
+        schedule_store.save({**body, "special": True}, shift_id, expected_special=True)
         _log(_admin_username(request), '修改特殊排班', f'#{shift_id} {_shift_summary(body)}')
         return {"id": shift_id}
     except (ValueError, TypeError, LookupError) as exc:
@@ -1166,7 +1219,7 @@ async def special_schedule_update(shift_id: int, request: Request):
 async def special_schedule_delete(shift_id: int, request: Request):
     _require_permission(request, "special")
     try:
-        schedule_store.delete(shift_id)
+        schedule_store.delete(shift_id, expected_special=True)
         _log(_admin_username(request), '删除特殊排班', f'#{shift_id}')
         return {"ok": True}
     except LookupError as exc:
@@ -1234,7 +1287,8 @@ async def weekly_publish(request: Request):
 
 def _require_member(request: Request) -> str:
     name = str(request.session.get("member_username") or "")
-    if not name or not member_store.session_valid(name, request.session.get("member_version")):
+    if (not name or not member_store.session_valid(name, request.session.get("member_version"))
+            or not session_policy.state(request.session.get("member_sid"), "member", name)):
         raise HTTPException(status_code=401, detail="请先登录值班账号")
     return name
 
@@ -1251,35 +1305,33 @@ async def member_status(request: Request):
     clock = system_clock.public()
     try:
         name = _require_member(request)
-        return {"logged_in": True, "username": name, "permissions": sorted(permissions.permissions_of(name)), "now": clock}
+        return JSONResponse({"logged_in": True, "username": name, "permissions": sorted(permissions.permissions_of(name)), "now": clock,
+                "rules": duty_settings.load(),
+                "network_access": checkin_access.status(security.client_key(request))}, headers={"Cache-Control": "no-store"})
     except HTTPException:
         return {"logged_in": False, "username": "", "now": clock}
 
 
 @app.post("/api/member/login")
 async def member_login(request: Request):
-    key = "member:" + security.client_key(request)
-    if MEMBER_LIMITER.blocked(key):
-        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
     body = await request.json()
     name = str(body.get("username") or "").strip()
     # The 原始管理员 is an administrator identity only; it must never open a duty session.
     version = None if root_admin.is_root(name) else member_store.authenticate(
         name, str(body.get("password") or ""))
     if not version:
-        MEMBER_LIMITER.fail(key)
         raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
-    MEMBER_LIMITER.reset(key)
     _log(name, '登录值班账号', role='member')
     request.session["member_username"] = name
     request.session["member_version"] = version
+    request.session["member_sid"] = session_policy.create("member", name)
     return {"ok": True, "username": name}
 
 
 @app.get("/api/member/field-duty")
 async def member_field_duty(request: Request):
-    name = _require_member_permission(request, "member_field")
-    return field_duty.member_status(name)
+    name = _require_member(request)
+    return {**field_duty.member_status(name), "network_access": checkin_access.status(security.client_key(request))}
 
 
 @app.get("/api/member/field-duty/pending")
@@ -1302,7 +1354,10 @@ async def member_field_confirm(username: str, request: Request):
 @app.delete("/api/member/field-duty/pending/{username}")
 async def member_field_reject(username: str, request: Request):
     name = _require_member_permission(request, "field_confirm")
-    result = field_duty.set_participation(username.strip(), False)
+    try:
+        result = field_duty.reject_pending(username.strip())
+    except LookupError as exc:
+        raise _schedule_error(exc) from exc
     _log(name, '删除外勤登记', username.strip(), role='member')
     return result
 
@@ -1310,6 +1365,7 @@ async def member_field_reject(username: str, request: Request):
 @app.post("/api/member/field-duty")
 async def member_field_duty_register(request: Request):
     name = _require_member_permission(request, "member_field")
+    _require_checkin_network(request, "field")
     result = field_duty.register(name)
     _log(name, '登记外勤', result.get('label', ''), role='member')
     return result
@@ -1323,6 +1379,7 @@ async def admin_set_attendance(request: Request):
         shift_id = int(body.get("shift_id"))
         name = str(body.get("name") or "").strip()
         result = overview.set_member_status(shift_id, name, str(body.get("status") or ""))
+        attendance_live.publish()
         _log(_admin_username(request), '更改考勤状态',
              f"{name} 班次 #{shift_id} → {result['status']}")
         return result
@@ -1439,6 +1496,7 @@ async def admin_root_password(request: Request):
 
 @app.post("/api/member/logout")
 async def member_logout(request: Request):
+    session_policy.revoke(request.session.pop("member_sid", None))
     request.session.pop("member_username", None)
     request.session.pop("member_version", None)
     return {"ok": True}
@@ -1490,7 +1548,8 @@ async def push_preview(request: Request):
 @app.get("/api/admin/permission-groups")
 async def permission_groups_list(request: Request):
     _require_permission(request, "permission_groups")
-    return {"items": permissions.list_groups(), "tree": permissions.TREE}
+    return JSONResponse({"items": permissions.list_groups(), "tree": permissions.TREE},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/admin/permission-groups")
@@ -1539,6 +1598,21 @@ async def admin_members(request: Request):
     }
 
 
+@app.delete("/api/admin/members/sso")
+async def admin_member_sso_unlink(request: Request, username: str = ""):
+    actor = _require_permission(request, "members")
+    name = username.strip()
+    if not name:
+        raise HTTPException(400, "请指定账号")
+    _reject_root(name)
+    try:
+        result = keycloak.unlink_account(name)
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    _log(actor, '解除 SSO 绑定', name)
+    return result
+
+
 @app.put("/api/admin/members/permissions")
 async def admin_member_permissions(request: Request):
     _require_permission(request, "members")
@@ -1547,7 +1621,7 @@ async def admin_member_permissions(request: Request):
     if not name:
         raise HTTPException(status_code=400, detail="请指定账号")
     if "permissions" in body:
-        raise HTTPException(status_code=400, detail="用户只能选择所属权限组，请在权限管理中修改访问范围")
+        raise HTTPException(status_code=400, detail="用户只能选择所属权限组，请在权限组管理中修改访问范围")
     _reject_root(name)
     try:
         perms = permissions.set_group(name, body.get("group_id"))
@@ -1658,6 +1732,112 @@ async def admin_update_member(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/admin/session-timeout")
+async def admin_session_timeout_get(request: Request):
+    _require_permission(request, "rules")
+    return session_policy.settings()
+
+
+@app.put("/api/admin/session-timeout")
+async def admin_session_timeout_save(request: Request):
+    actor = _require_permission(request, "rules")
+    try:
+        value = session_policy.save(await request.json())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _log(actor, '修改无操作自动退出设置', f"无操作：成员 {value['member_minutes']} 分钟，管理 {value['admin_minutes']} 分钟；无响应：成员 {value['member_response_seconds']} 秒，管理 {value['admin_response_seconds']} 秒")
+    return value
+
+
+def _idle_identity(request: Request, role: str):
+    if role == "admin":
+        name = _session_account(request)
+        handle = getattr(request.state, "admin_session_id", None) or request.session.get("admin_sid")
+    elif role == "member":
+        try:
+            name = _require_member(request)
+        except HTTPException:
+            name = ""
+        handle = request.session.get("member_sid")
+    else:
+        raise HTTPException(400, "登录端类型不正确")
+    return name, handle
+
+
+@app.get("/api/session/idle")
+async def session_idle(request: Request, role: str = "member"):
+    name, handle = _idle_identity(request, role)
+    record = session_policy.state(handle, role, name) if name else None
+    value = {"logged_in": bool(record), "server_now": time.time(),
+             "idle_minutes": session_policy.settings()[role + "_minutes"],
+             "expires_at": record['expires_at'] if record else None}
+    return JSONResponse(value, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/session/activity")
+async def session_activity(request: Request, role: str = "member"):
+    name, handle = _idle_identity(request, role)
+    if not name:
+        raise HTTPException(401, "登录已超时，请重新登录")
+    body = await request.json()
+    try:
+        active = session_policy.touch(handle, role, name, body.get("activity_at"))
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(400, "操作时间格式不正确") from exc
+    if not active:
+        raise HTTPException(401, "登录已超时，请重新登录")
+    response = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+    if role == "admin":
+        _set_admin_cookie(response, name, handle, version=request.state.admin_session_version)
+    return response
+
+
+@app.get("/api/admin/sso")
+async def admin_sso_get(request: Request):
+    _require_permission(request, "sso")
+    from server import sso_settings
+    return sso_settings.public()
+
+
+@app.put("/api/admin/sso")
+async def admin_sso_save(request: Request):
+    actor = _require_permission(request, "sso")
+    from server import sso_settings
+    try:
+        result = sso_settings.save(await request.json())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _log(actor, '保存 SSO 配置', '启用' if result['enabled'] else '停用')
+    return result
+
+
+@app.post("/api/admin/sso/test")
+async def admin_sso_test(request: Request):
+    _require_permission(request, "sso")
+    from server import sso_settings
+    try:
+        value = sso_settings.prepare(await request.json())
+        sso_settings.validate(value, require_complete=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        metadata = await keycloak.discovery(value)
+    except Exception:
+        raise HTTPException(502, '无法读取身份提供方配置，请检查地址、证书及网络连接') from None
+    return {"ok": True, "message": "身份提供方连接正常；客户端授权与用户名读取需实际登录验证。",
+            "claims": [field for field in metadata.get('claims_supported', [])
+                       if field in {'preferred_username', 'name', 'given_name', 'family_name', 'email'}]}
+
+
+@app.get("/auth/keycloak/bind")
+async def keycloak_binding_page():
+    return FileResponse(WEB / "keycloak-bind.html", headers={"Cache-Control": "no-store"})
+
+
+from server import keycloak
+app.include_router(keycloak.router)
+
+
 @app.get("/{slug}")
 async def admin_page(slug: str, request: Request):
     if len(slug) != 8 or slug != admin_store.path():
@@ -1671,3 +1851,56 @@ async def admin_page(slug: str, request: Request):
             "Expires": "0",
         },
     )
+
+
+@app.get("/api/network-access")
+async def network_access_status(request: Request):
+    return JSONResponse(checkin_access.status(security.client_key(request)), headers={"Cache-Control": "no-store"})
+
+
+def _require_checkin_network(request: Request, kind: str):
+    if not checkin_access.status(security.client_key(request))[kind]:
+        raise HTTPException(403, f"当前网络不允许{checkin_access.KINDS[kind]}，请连接允许的网络后重试")
+
+
+@app.get("/api/admin/checkin-access")
+async def admin_checkin_access_get(request: Request):
+    _require_permission(request, "checkin_manage")
+    return {"rules": checkin_access.load(), "network_access": checkin_access.status(security.client_key(request))}
+
+
+@app.put("/api/admin/checkin-access")
+async def admin_checkin_access_save(request: Request):
+    actor = _require_permission(request, "checkin_manage")
+    try:
+        rules = checkin_access.save(await request.json())
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _log(actor, '修改打卡网络限制', '更新打卡和外勤的 IP 允许/排除规则')
+    return {"rules": rules, "network_access": checkin_access.status(security.client_key(request))}
+
+
+@app.post("/api/session/heartbeat")
+async def session_heartbeat(request: Request, role: str = "member"):
+    name, handle = _idle_identity(request, role)
+    if not name or not session_policy.heartbeat(handle, role, name):
+        raise HTTPException(401, "设备响应已超时，请重新登录")
+    return JSONResponse({"ok": True, "timeout_seconds": session_policy.response_timeout(role)},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/attendance/live")
+async def attendance_updates(request: Request, role: str = "member", after: str = ""):
+    if len(after) > 64:
+        raise HTTPException(400, "更新版本格式错误")
+    def authorize():
+        if role == "admin":
+            _require_permission(request, "overview")
+        elif role == "member":
+            _require_member(request)
+        else:
+            raise HTTPException(400, "登录端类型不正确")
+    authorize()
+    value = await attendance_live.wait(after)
+    authorize()  # Revocation during a long poll must take effect before replying.
+    return JSONResponse({"revision": value}, headers={"Cache-Control": "no-store"})

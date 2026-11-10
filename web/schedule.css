@@ -256,6 +256,9 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 .animated-button.check-in-button{padding:10.4px 28.8px;font-size:13.6px;background:var(--md-surface-high)}
 .animated-button.check-in-button .text{transform:translateX(-8px)}
 .animated-button.check-in-button:hover .text{transform:translateX(8px)}
+.animated-button.check-in-button:enabled:hover{background:#c8efc8;color:#1f5b25}
+.animated-button.check-in-button:enabled:hover .circle{background-color:#c8efc8}
+.animated-button.check-in-button:enabled:hover svg{fill:currentColor}
 .animated-button.check-in-button:disabled,
 .animated-button.check-in-button.is-locked{
   background:var(--md-surface-low);color:var(--md-secondary);box-shadow:none;
@@ -695,3 +698,35 @@ form .status-options .status-option input[type=radio]:focus-visible{outline:1.6p
 
 .data-toolbar .member-search { min-width: 0; }
 .data-toolbar .member-search input { min-width: 0; }
+
+.checkin-access-form { max-width: 960px; }
+.checkin-access-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 20px 0; }
+.checkin-access-grid fieldset { min-width: 0; border: 1px solid var(--md-outline); border-radius: var(--md-radius-lg); padding: 20px; }
+.checkin-access-grid legend { color: var(--md-primary); padding: 0 8px; font-size: 16px; font-weight: 600; }
+.checkin-access-grid select { width: 100%; margin: 6px 0 18px; }
+.checkin-access-grid textarea { display: block; width: 100%; margin-top: 6px; resize: vertical; font-family: ui-monospace, monospace; }
+.animated-button:is(.network-blocked, .permission-blocked):disabled { width: max-content; justify-content: center; background: #e1e6e9; color: #737d83; box-shadow: none; opacity: 1; cursor: not-allowed; scale: 1; }
+.animated-button:is(.network-blocked, .permission-blocked) .circle { display: none; }
+.animated-button:is(.network-blocked, .permission-blocked):disabled svg { display: none; }
+.animated-button:is(.network-blocked, .permission-blocked):disabled .text { width: auto; flex-shrink: 0; transform: none; text-align: center; white-space: nowrap; transition: none; }
+@media (max-width: 650px) { .checkin-access-grid { grid-template-columns: 1fr; } }
+
+#dutyPage .member-field-card { max-width: none; margin: 0 0 24px; }
+.member-field-card .section-head { margin-bottom: 0; }
+.member-field-card .badge { gap: 4px; }
+.member-field-card > p { margin: 0; }
+.member-field-card #fieldStatus:empty { display: none; }
+
+.settings-section-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 28px 0 16px; }
+.settings-section-head p { margin-bottom: 0; }
+#settingsPage { width: 100%; max-width: 960px; }
+#settingsPage .rules-card,
+#settingsPage .checkin-access-form,
+#settingsPage .sso-config { width: 100%; max-width: none; }
+
+#checkinSettingsSection, #ssoSettingsSection { margin-top: 20px; }
+#ssoConfigForm > fieldset { display: grid; gap: 24px; }
+#ssoConfigForm .sso-enable-card { background: transparent; padding: 0 0 20px; border-bottom: 1px solid var(--md-surface-low); }
+#ssoConfigForm h3, .settings-subheading { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+#ssoConfigForm > .hint { margin-top: 12px; }
+#ssoConfigForm .sso-actions { padding: 0; }

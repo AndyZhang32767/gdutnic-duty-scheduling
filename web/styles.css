@@ -2006,3 +2006,44 @@ textarea { resize: vertical; min-height: 44.8px; }
     transition-duration: 0.01ms;
   }
 }
+
+/* Keep SSO immediately to the left of the existing password-login action. */
+.auth-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.admin-board-right .auth-actions .btn { margin-top: 0; }
+.sso-bind-note { color: var(--md-secondary); font-size: 13px; line-height: 1.7; }
+.sso-bind-note strong { overflow-wrap: anywhere; }
+.sso-confirm { max-width: 440px; border: 0; border-radius: var(--md-radius-lg); padding: 24px; background: var(--md-surface-low); color: var(--md-on-surface); }
+.sso-confirm::backdrop { background: rgba(0,0,0,.4); }
+.sso-confirm p { overflow-wrap: anywhere; line-height: 1.7; }
+
+.admin-board-left .sso-bind-note { margin-top: 12px; }
+
+/* Material You: tonal sections, outlined fields and a high-contrast switch. */
+.sso-config { max-width: 960px; }
+.sso-config fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.sso-config .card { margin-bottom: 20px; padding: 24px; border-radius: 24px; }
+.sso-enable-card { display: flex; justify-content: space-between; align-items: center; gap: 24px; background: var(--md-primary-container); }
+.sso-enable-card h2, .sso-config-card h2 { margin: 0 0 8px; font-size: 18px; }
+.sso-config .hint { line-height: 1.7; margin: 0 0 18px; overflow-wrap: anywhere; }
+.sso-enable-card .hint { margin: 0; }
+.sso-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 22px; margin-top: 24px; align-items: start; }
+.sso-wide { grid-column: 1 / -1; }
+.sso-config .outlined-field { margin-bottom: 8px; }
+.sso-config input, .sso-config select { width: 100%; }
+.sso-config .review-check input { width: auto; }
+.sso-config select { min-height: 44px; border-radius: 16px; background: var(--md-surface-low); color: var(--md-on-surface); }
+.sso-match-row { margin: 24px 0 18px; }
+.sso-toggle { display: inline-flex; position: relative; flex: 0 0 auto; cursor: pointer; }
+.sso-toggle input { position: absolute; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
+.sso-toggle span { width: 52px; height: 32px; border-radius: 99px; border: 2px solid var(--md-outline, #71818a); background: var(--md-surface-low); pointer-events: none; transition: background .15s; }
+.sso-toggle span::after { content: ''; display: block; width: 20px; height: 20px; margin: 4px; border-radius: 50%; background: var(--md-secondary); transition: transform .15s; }
+.sso-toggle input:checked + span { background: var(--md-primary); border-color: var(--md-primary); }
+.sso-toggle input:checked + span::after { transform: translateX(20px); background: var(--md-on-primary, white); }
+.sso-toggle input:focus-visible + span { outline: 3px solid var(--md-primary); outline-offset: 4px; }
+.sso-actions { padding: 0 4px 24px; }
+.sso-actions .actions { justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
+.sso-actions [role=status] { min-height: 24px; line-height: 1.6; }
+@media (max-width: 650px) { .sso-grid { grid-template-columns: minmax(0,1fr); } .sso-config .card { padding: 20px; } .sso-enable-card { gap: 12px; } }
+@media (prefers-reduced-motion: reduce) { .sso-toggle span, .sso-toggle span::after { transition: none; } }
+
+.sso-org-icon { width: 20px; height: 20px; flex: 0 0 20px; object-fit: contain; }

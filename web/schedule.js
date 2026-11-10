@@ -28,6 +28,7 @@ function el(tag, cls, text) { const n=document.createElement(tag); if(cls)n.clas
 const ACTION_ICONS = {
   '编辑班次': 'pencil-outline', '编辑': 'pencil-outline',
   '删除': 'delete-outline', '删除账号': 'delete-outline',
+  '解绑SSO': 'link-off-outline',
   '更改权限': 'shield-account-outline', '更改密码': 'lock-outline',
   '重置密码': 'lock-reset', '停用账号': 'account-off-outline',
   '启用账号': 'account-check-outline',
@@ -47,19 +48,27 @@ async function load() {
   $('status').textContent='正在加载排班…';
   window.updateShiftTimeline([]);
   try {
-    const data=await api('/api/schedules?day='+encodeURIComponent(dayInput().value));
+    const data=await api('/api/member/schedules?day='+encodeURIComponent(dayInput().value));
     if(token !== generation)return;
     // Defence in depth for members even if an admin cookie is also present in the browser.
     const visible = admin ? data.items : data.items.filter(s => s.members.some(m => m.name === member?.username));
     syncClock(data.now);
+    window.setNetworkAccess?.(data.network_access);
     items=visible; rules=data.rules; window.updateShiftTimeline(items); render(); $('status').textContent='';
   } catch(e) { if(token===generation){ $('shifts').replaceChildren(); $('status').textContent=e.message; if(!admin && e.status===401)await bootMember(); } }
 }
-function render() {
-  $('shifts').replaceChildren();
+function mountShiftCard(card) {
+  const previous = $('shifts').querySelector(`[data-shift-id="${card.dataset.shiftId}"]`);
+  if (previous) previous.replaceWith(card);
+  else $('shifts').append(card);
+}
+function render(changedIds = null) {
+  if (!changedIds) $('shifts').replaceChildren();
   if(!items.length){const box=el('div','empty');box.append(el('h2','', '当天暂无排班'),el('p','',admin?'点击「新增班次」开始安排值班。':'管理员发布排班后，会显示在这里。'));$('shifts').append(box);}
   for(const s of items){
+    if (changedIds && !changedIds.has(s.id)) continue;
     const card=el('article','card'),top=el('div','shift-top'),info=el('div');
+    card.dataset.shiftId = String(s.id);
     info.append(el('div','time',s.start+' — '+s.end));
     top.append(info,el('span','badge',`${s.members.filter(m=>m.checked_at).length} / ${s.members.length} 已签到`));card.append(top);
     if(s.note)card.append(el('p','',s.note));
@@ -77,35 +86,47 @@ function render() {
       try{await api('/api/admin/schedules/'+s.id,'DELETE');await load();}catch(e){$('status').textContent=e.message;}
     }));card.append(actions);}else{
       const own = s.members.find(m=>m.name === member?.username);
-      if (!own) { card.append(el('p','','此班次未安排你值班。')); $('shifts').append(card); continue; }
-      if (own.checked_at) { card.append(el('p','', '你已于 '+new Date(own.checked_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})+' 签到。')); $('shifts').append(card); continue; }
+      if (!own) { card.append(el('p','','此班次未安排你值班。')); mountShiftCard(card); continue; }
       const form=el('form','check-form');
-      // Same animated control as 点击登记; turns light green once the check-in is recorded.
-      const {btn: submit, text: submitText} = window.animatedButton('点击登记', '确认登记',
+      // Attendance uses its own copy and green hover state.
+      const {btn: submit, text: submitText} = window.animatedButton('确认签到', '确认签到',
         async (button, label) => {
+          button.classList.add('is-submitting');
           button.disabled = true;
           try {
-            const result = await api(`/api/schedules/${s.id}/check-in`,'POST');
+            await api(`/api/schedules/${s.id}/check-in`,'POST');
             button.classList.add('registered');
-            label.textContent = '签到完成';
-            $('status').textContent = result.chained?.length
-              ? `签到成功，已自动签到后续相连的 ${result.chained.length} 个班次。`
-              : '签到成功，已记录到岗时间。';
+            label.textContent = '已签到';
+            $('status').textContent = '';
             setTimeout(() => load(), 900);
           } catch (err) {
             $('status').textContent = err.message;
             button.disabled = false;
+            window.applyNetworkButton?.(button, 'checkin', label);
+            if (err.status === 403) await window.refreshNetworkAccess?.();
+          } finally {
+            button.classList.remove('is-submitting');
           }
         }, 'check-in-button');
+      if (own.checked_at) {
+        submit.classList.add('registered');
+        submit.disabled = true;
+        submit.setAttribute('aria-disabled', 'true');
+        submitText.textContent = '已签到';
+        form.append(submit);
+        card.append(form);
+        mountShiftCard(card);
+        continue;
+      }
       // Mirror the server window: opens early_minutes before start and closes at end.
       const range=window.ShiftTimeline.interval(s);
       const window_ms={early:(rules?.early_minutes ?? 10)*60000, late:(rules?.late_minutes ?? 15)*60000, absent:(rules?.absent_minutes ?? 30)*60000};
       window.syncCheckInButton(submit, submitText, range, window_ms, clockNow());
       submit.classList.toggle('is-locked', submit.disabled);
       form.dataset.shiftId=String(s.id);
-      form.append(submit);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{const result=await api(`/api/schedules/${s.id}/check-in`,'POST');await load();$('status').textContent=result.chained?.length?`签到成功，已自动签到后续相连的 ${result.chained.length} 个班次。`:'签到成功，已记录到岗时间。';}catch(err){$('status').textContent=err.message;submit.disabled=false;}};card.append(form);
+      form.append(submit);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{await api(`/api/schedules/${s.id}/check-in`,'POST');await load();}catch(err){$('status').textContent=err.message;submit.disabled=false;window.applyNetworkButton?.(submit, 'checkin', submitText);}};card.append(form);
     }
-    $('shifts').append(card);
+    mountShiftCard(card);
   }
 }
 function openEditor(s){editing=s?s.id:null;editingSpecial=null;const f=$('shiftForm');f.reset();$('formStatus').textContent='';$('editorTitle').textContent=s?'编辑班次':'新增班次';for(const key of ['day','start','end','note'])f.elements[key].value=s?s[key]:(key==='day'?dayInput().value:'');f.elements.members.value=s?s.members.map(m=>m.name).join('\n'):'';$('editor').showModal();}
@@ -144,17 +165,57 @@ if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
     $('authSubmit').textContent=setup?'登录':'创建原始管理员';document.body.classList.toggle('auth-pending',!state.logged_in);$('authCard').hidden=state.logged_in;$('workspace').hidden=!state.logged_in;$('logout').hidden=!state.logged_in;if(state.logged_in)await load();}catch(e){$('authStatus').textContent=e.message;}}
   boot();
 }else bootMember();
-if(!admin) setInterval(()=>{
+function updateCheckInButtons() {
   for(const form of document.querySelectorAll('#shifts .check-form')) {
-    const button=form.querySelector('button[type=submit]'), shift=items.find(s=>String(s.id)===form.dataset.shiftId);
+    const button=form.querySelector('button'), shift=items.find(s=>String(s.id)===form.dataset.shiftId);
     const label=form.querySelector('.animated-button .text');
-    if(button && label && shift) {
+    if(button && label && shift && !button.classList.contains('registered') && !button.classList.contains('is-submitting')) {
       syncCheckInButton(button, label, window.ShiftTimeline.interval(shift), {
         early:(rules?.early_minutes ?? 10)*60000, late:(rules?.late_minutes ?? 15)*60000, absent:(rules?.absent_minutes ?? 30)*60000}, clockNow());
       if(!button.classList.contains('registered')) button.classList.toggle('is-locked', button.disabled);
     }
   }
-}, 20000);
+}
+if(!admin) setInterval(updateCheckInButtons, 1000);
+
+// Time/rule changes in an already open member tab must reach its check-in controls.
+let refreshingCheckinState = false;
+async function refreshMemberCheckinState() {
+  if (admin || !member || document.hidden || refreshingCheckinState) return;
+  refreshingCheckinState = true;
+  try {
+    const state = await api('/api/member/status');
+    if (!state.logged_in) { await bootMember(); return; }
+    const previousDay = today();
+    const previousAccess = window.networkAccess;
+    const wasDutyHidden = $('dutyPage').hidden;
+    const previousPermissions = [...(window.memberPermissions || [])].sort().join(',');
+    applyMemberPermissions(state.permissions || []);
+    syncClock(state.now);
+    rules = state.rules;
+    window.setNetworkAccess?.(state.network_access);
+    if (previousAccess && state.network_access &&
+        (previousAccess.checkin !== state.network_access.checkin || previousAccess.field !== state.network_access.field)) {
+      window.dispatchEvent(new Event('network-access-change'));
+    }
+    if ((previousDay !== today() || wasDutyHidden) && !$('dutyPage').hidden) await load();
+    else updateCheckInButtons();
+    if (previousPermissions !== [...window.memberPermissions].sort().join(',') && !$('dutyPage').hidden && typeof loadFieldDuty === 'function') await loadFieldDuty();
+  } catch (err) {
+    if ($('status')) $('status').textContent = '无法同步签到时间，请刷新重试。';
+  } finally { refreshingCheckinState = false; }
+}
+window.announceCheckinSettings = () => {
+  try { localStorage.setItem('gdutnic_checkin_settings', String(Date.now())); } catch (_) {}
+};
+if (!admin) {
+  setInterval(refreshMemberCheckinState, 15000);
+  window.addEventListener('focus', refreshMemberCheckinState);
+  document.addEventListener('visibilitychange', refreshMemberCheckinState);
+  window.addEventListener('storage', event => {
+    if (event.key === 'gdutnic_checkin_settings') refreshMemberCheckinState();
+  });
+}
 
 function on(id, helper) {
   const node = $(id);
@@ -165,6 +226,8 @@ function on(id, helper) {
 async function bootMember() {
   try {
     const state = await api('/api/member/status');
+    window.setNetworkAccess?.(state.network_access);
+    rules = state.rules;
     member = state.logged_in ? state : null;
     document.body.classList.toggle('auth-pending', !member);
     if ($('memberAuth')) $('memberAuth').hidden = !!member;
@@ -213,27 +276,52 @@ async function refreshAdminPermissions() {
   window.canClock = window.adminPermissions.includes('clock');
   window.canSmtp = window.adminPermissions.includes('smtp');
   if (window.applyPermissions) window.applyPermissions(window.adminPermissions);
+  window.applySettingsPermissions?.();
   if (!state.logged_in) location.reload();
   return state;
 }
 
 function applyMemberPermissions(granted) {
   const held = new Set(granted);
-  const pages = {duty: ['dutyTab', 'dutyPage', 'duty'],
+  window.memberPermissions = held;
+  const canOpen = permission => permission === null || held.has(permission);
+  const pages = {duty: ['dutyTab', 'dutyPage', null],
     scheduleList: ['scheduleListTab', 'scheduleListPage', 'schedule_list'],
-    field: ['fieldTab', 'fieldPage', 'member_field'],
     confirm: ['fieldConfirmTab', 'fieldConfirmPage', 'field_confirm']};
-  let selected = Object.keys(pages).find(key => $(pages[key][0])?.classList.contains('active') && held.has(pages[key][2]));
-  selected ||= Object.keys(pages).find(key => held.has(pages[key][2]));
+  let selected = Object.keys(pages).find(key => $(pages[key][0])?.classList.contains('active') && canOpen(pages[key][2]));
+  selected ||= Object.keys(pages).find(key => canOpen(pages[key][2]));
   for (const [key, [tab, page, permission]] of Object.entries(pages)) {
-    if ($(tab)) { $(tab).hidden = !held.has(permission); $(tab).classList.toggle('active', key === selected); }
+    if ($(tab)) { $(tab).hidden = !canOpen(permission); $(tab).classList.toggle('active', key === selected); }
     if ($(page)) $(page).hidden = key !== selected;
   }
   if ($('memberNoAccess')) $('memberNoAccess').hidden = !!selected;
 }
 async function loadCurrentMemberPage() {
   if ($('scheduleListTab')?.classList.contains('active') && typeof loadMemberSchedules === 'function') { await loadMemberSchedules(); return; }
-  if ($('dutyTab')?.classList.contains('active')) await load();
-  else if ($('fieldTab')?.classList.contains('active') && typeof loadFieldDuty === 'function') await loadFieldDuty();
+  if ($('dutyTab')?.classList.contains('active')) {
+    await load();
+    if (typeof loadFieldDuty === 'function') await loadFieldDuty();
+  }
   else if ($('fieldConfirmTab')?.classList.contains('active') && typeof loadFieldPending === 'function') await loadFieldPending();
 }
+
+if (!admin) window.addEventListener('network-access-change', () => { if (member && !$('dutyPage').hidden) render(); });
+
+
+window.refreshMemberAttendance = async () => {
+  if (admin || !member || $('dutyPage').hidden) return;
+  const token = ++generation;
+  const data = await api('/api/member/schedules?day=' + encodeURIComponent(dayInput().value));
+  if (token !== generation || !member || $('dutyPage').hidden) return;
+  const visible = data.items.filter(s => s.members.some(m => m.name === member.username));
+  const before = new Map(items.map(s => [s.id, JSON.stringify(s)]));
+  const changed = new Set(visible.filter(s => before.get(s.id) !== JSON.stringify(s)).map(s => s.id));
+  const sameShifts = items.length === visible.length && visible.every(s => before.has(s.id));
+  syncClock(data.now);
+  window.setNetworkAccess?.(data.network_access);
+  rules = data.rules; items = visible;
+  if (!sameShifts) render();
+  else if (changed.size) render(changed);
+  window.updateShiftTimeline(items);
+  if ($('status').textContent === '正在加载排班…') $('status').textContent = '';
+};

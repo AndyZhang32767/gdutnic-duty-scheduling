@@ -1,7 +1,7 @@
 // Admin overview: monthly attendance stats, current-duty timeline, and this week's board.
 const WEEK_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const STATUS_TEXT = {normal:'正常', late:'迟到', absent:'旷班', pending:'待签到'};
-let overviewData = null, overviewToken = 0;
+let overviewData = null, overviewToken = 0, detailShiftId = null;
 // Anchor for the week board: any day inside the requested week, or null for this week.
 let overviewWeek = null;
 
@@ -17,6 +17,7 @@ function overviewCard(s) {
     : s.phase === 'future' ? 'future' : 'ok';
   const card = el('button', `week-card ${tone}`);
   card.type = 'button';
+  card.dataset.shiftId = String(s.id);
   card.append(el('strong', 'week-card-time', shiftTime(s)));
   card.append(el('span', 'week-card-count', `${s.members.length} 人`));
   // Reserve room for three names so every card keeps the same height; extra names are collapsed.
@@ -89,6 +90,7 @@ function renderWeek(week, today) {
 }
 
 function openDetail(s) {
+  detailShiftId = s.id;
   $('detailTitle').textContent = `${s.day} ${shiftTime(s)}`;
   $('detailMeta').textContent = `${s.note || '值班班次'} · ${s.members.length} 人`;
   const list = $('detailMembers');
@@ -109,7 +111,7 @@ function openDetail(s) {
       : '未签到'));
     list.append(row);
   }
-  $('detailDialog').showModal();
+  if (!$('detailDialog').open) $('detailDialog').showModal();
 }
 
 // Manual fixes take precedence over the automatic late/absent calculation.
@@ -184,7 +186,7 @@ function clearVisibleWeek() {
   });
 }
 
-function renderOverview() {
+function renderOverview(changedIds = null) {
   if (!overviewData) return;
   const stats = overviewData.stats;
   $('attendanceRate').textContent = stats.rate === null ? '—' : `${stats.rate}%`;
@@ -193,7 +195,14 @@ function renderOverview() {
   $('absentCount').textContent = stats.absent;
   items = overviewData.timeline;
   window.updateShiftTimeline(items);
-  renderWeek(overviewData.week, overviewData.today);
+  if (!changedIds) renderWeek(overviewData.week, overviewData.today);
+  else {
+    for (const shift of overviewData.week.days.flatMap(day => day.shifts)) {
+      if (!changedIds.has(shift.id)) continue;
+      const card = $('weekBoard').querySelector(`[data-shift-id="${shift.id}"]`);
+      if (card) card.replaceWith(overviewCard(shift));
+    }
+  }
   loadAnomaly(anomalyWeeks);
 }
 
@@ -203,9 +212,9 @@ function applyPermissions(granted) {
   // An entry is visible when the account holds any of its permissions. 其他设置 has no
   // page leaf of its own: either card's permission opens the page.
   const needs = {dailyTab: ['overview'], weeklyTab: ['weekly'], specialTab: ['special'],
-    swapTab: ['swap'], fieldTab: ['field'], pushTab: ['push'], membersTab: ['members'],
-    permissionGroupsTab: ['permission_groups'], logsTab: ['logs'], dataTab: ['data'],
-    settingsTab: ['rules', 'clock', 'smtp']};
+    swapTab: ['swap'], fieldTab: ['field'], membersTab: ['members'],
+    permissionGroupsTab: ['permission_groups'], pushTab: ['push'], logsTab: ['logs'], dataTab: ['data'],
+    settingsTab: ['rules', 'clock', 'smtp', 'checkin_manage', 'sso']};
   let firstVisible = null;
   for (const [id, permissions] of Object.entries(needs)) {
     const node = $(id);
@@ -294,3 +303,27 @@ if (typeof ResizeObserver !== 'undefined') {
     updateStatsVisibility(group);
   });
 }
+
+
+window.refreshOverviewAttendance = async () => {
+  if ($('dailyPage').hidden || !window.adminPermissions?.includes('overview')) return;
+  const token = ++overviewToken;
+  const query = '/api/admin/overview?month=' + encodeURIComponent(currentMonth())
+    + (overviewWeek ? '&week=' + encodeURIComponent(overviewWeek) : '');
+  const data = await api(query);
+  if (token !== overviewToken || $('dailyPage').hidden) return;
+  const before = overviewData?.week.days.flatMap(day => day.shifts) || [];
+  const previous = new Map(before.map(s => [s.id, JSON.stringify(s)]));
+  const shifts = data.week.days.flatMap(day => day.shifts);
+  const sameWeek = overviewData?.week.start === data.week.start && shifts.length === before.length
+    && shifts.every(s => previous.has(s.id));
+  const changed = new Set(shifts.filter(s => previous.get(s.id) !== JSON.stringify(s)).map(s => s.id));
+  overviewData = data;
+  overviewWeek = data.week.start === data.week.current ? null : data.week.start;
+  renderOverview(sameWeek ? changed : null);
+  if ($('status').textContent === '正在加载概览…') $('status').textContent = '';
+  if ($('detailDialog').open && detailShiftId !== null) {
+    const fresh = shifts.find(s => s.id === detailShiftId) || data.timeline.find(s => s.id === detailShiftId);
+    if (fresh) openDetail(fresh);
+  }
+};

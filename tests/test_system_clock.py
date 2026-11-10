@@ -117,3 +117,15 @@ class TestSystemClock(ClockFixture):
     def test_invalid_pinned_date_is_rejected(self):
         with self.assertRaises(ValueError):
             system_clock.save(automatic=False, hour=9, minute=0, day='2026-13-01')
+
+    def test_first_shift_opens_at_0815_and_accepts_0818_with_fifteen_minutes_early(self):
+        from server import duty_settings
+        duty_settings.save({'early_minutes': 15, 'late_minutes': 10, 'absent_minutes': 30})
+        sid = schedule_store.save(dict(day='2026-11-10', start='08:30', end='10:15', members=['张三']))
+        with patch.object(schedule_store, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 11, 10, 20, 0, tzinfo=schedule_store.TZ)
+            system_clock.save(automatic=False, hour=8, minute=14, day='2026-11-10')
+            with self.assertRaises(ValueError):
+                schedule_store.check_in(sid, '张三')
+            system_clock.save(automatic=False, hour=8, minute=18, day='2026-11-10')
+            self.assertTrue(schedule_store.check_in(sid, '张三').startswith('2026-11-10T08:18:'))

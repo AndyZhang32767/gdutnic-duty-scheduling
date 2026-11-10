@@ -84,12 +84,15 @@ def list_accounts():
     perms_store.ensure_defaults()
     with db.read() as conn:
         rows = [dict(r) for r in conn.execute(
-            'SELECT m.username,m.active,m.group_id,g.name AS group_name,g.permissions '
-            'FROM member_accounts m LEFT JOIN permission_groups g ON g.id=m.group_id ORDER BY m.username')]
+            'SELECT m.username,m.active,m.group_id,g.name AS group_name,g.permissions, '
+            '(k.identity_key IS NOT NULL) AS sso_bound '
+            'FROM member_accounts m LEFT JOIN permission_groups g ON g.id=m.group_id '
+            'LEFT JOIN keycloak_links k ON k.username=m.username AND k.account_key=m.sso_id ORDER BY m.username')]
     rows = [row for row in rows if not root_admin.is_root(row.get('username'))]
     for row in rows:
         row['permissions'] = sorted(perms_store.decode(row.get('permissions')))
         row['root'] = False
+        row['sso_bound'] = bool(row['sso_bound'])
     return rows
 
 
@@ -109,7 +112,7 @@ def verify(name, password):
     return authenticate(name, password) is not None
 
 
-def session_valid(name, version):
+def session_valid(name, version, *, use_cache=True):
     # Changing/resetting a password invalidates pre-existing member sessions. The cache
     # key includes the stored digest, so a new password simply misses the old entry.
     import hashlib
@@ -118,13 +121,14 @@ def session_valid(name, version):
     if root_admin.is_root(name):
         return version == root_admin.session_version()
     key = f'{name}:{version}'
-    cached = MEMBER_SESSIONS.get(key)
+    cached = MEMBER_SESSIONS.get(key) if use_cache else None
     if cached is not None:
         return cached
     with db.read() as conn:
         row = conn.execute('SELECT password,active FROM member_accounts WHERE username=?', (name,)).fetchone()
     valid = bool(row and row['active'] and version == hashlib.sha256(row['password'].encode()).hexdigest())
-    MEMBER_SESSIONS.put(key, valid)
+    if use_cache:
+        MEMBER_SESSIONS.put(key, valid)
     return valid
 
 

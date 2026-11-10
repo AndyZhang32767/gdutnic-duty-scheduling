@@ -88,3 +88,5 @@ h2[data-icon]::before, h3[data-icon]::before { color: var(--md-primary); }
 [data-icon="eye-outline"] { --component-icon: url("/icon/components/eye-outline.svg"); }
 [data-icon="eye-off-outline"] { --component-icon: url("/icon/components/eye-off-outline.svg"); }
 .password-visibility[data-icon]::before { width: 20px; height: 20px; flex-basis: 20px; }
+
+[data-icon="link-off-outline"] { --component-icon: url("/icon/components/link-off-outline.svg"); }

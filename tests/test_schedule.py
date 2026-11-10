@@ -67,7 +67,7 @@ class ScheduleTest(unittest.TestCase):
             own = store.list_day(day, '张三')
             self.assertEqual([s['id'] for s in own], [sid])
             self.assertEqual([{k: v for k, v in m.items() if k != 'status'} for m in own[0]['members']],
-                             [{'name': '张三', 'checked_at': None}])
+                             [{'name': '张三', 'checked_at': None}, {'name': '李四', 'checked_at': None}])
             self.assertEqual(store.list_day(day, '未排班人员'), [])
         self.assertEqual(len(store.list_day('2026-11-02')), 2)
 

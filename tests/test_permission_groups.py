@@ -129,7 +129,8 @@ class TestPermissionGroups(PermissionFixture):
         group = permissions.save_group('仅签到', ['duty'])
         permissions.set_group('one', group['id'])
         self.assertEqual(client.get('/api/schedules?day=2026-11-02').status_code, 200)
-        self.assertEqual(client.get('/api/member/field-duty').status_code, 403)
+        self.assertEqual(client.get('/api/member/field-duty').status_code, 200)
+        self.assertEqual(client.post('/api/member/field-duty').status_code, 403)
         self.assertEqual(client.get('/api/member/field-duty/pending').status_code, 403)
         permissions.save_group('仅签到', ['member_field'], group['id'])
         self.assertEqual(client.get('/api/schedules?day=2026-11-02').status_code, 403)
@@ -205,7 +206,7 @@ class TestGranularPermissions(TestPermissionGroups):
         overview = next(n for n in tree['admin_area']['children'] if n['id'] == 'overview_group')
         self.assertEqual({leaf['id'] for leaf in overview['children']}, {'overview', 'attendance_edit'})
         settings = next(n for n in tree['admin_area']['children'] if n['id'] == 'settings_group')
-        self.assertEqual({leaf['id'] for leaf in settings['children']}, {'rules', 'clock', 'smtp'})
+        self.assertEqual({leaf['id'] for leaf in settings['children']}, {'rules', 'clock', 'smtp', 'checkin_manage', 'sso'})
         # Group ids are never stored; 其他设置 is derived, not a tree leaf.
         self.assertEqual(set(permissions.leaves()),
                          set(permissions.PERMISSIONS) - set(permissions.DERIVED))

@@ -93,6 +93,20 @@ def confirm(username, month=None):
     return member_status(username, month)
 
 
+def reject_pending(username, month=None):
+    """The member confirmation permission only permits rejecting pending rows."""
+    month = month or _month()
+    with db.write() as conn:
+        init(conn)
+        deleted = conn.execute(
+            'DELETE FROM field_duty WHERE month=? AND username=? AND status=?',
+            (month, username, PENDING)).rowcount
+        if not deleted:
+            raise LookupError('该人员本月没有待确认的外勤登记')
+    return {'month': month, 'username': username, 'registered': False,
+            'registered_at': None, 'manual': False}
+
+
 def pending(month=None):
     """Registrations waiting for confirmation (status 1), oldest first."""
     month = month or _month()

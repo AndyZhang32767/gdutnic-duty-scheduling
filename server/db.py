@@ -71,7 +71,18 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at);
 CREATE TABLE IF NOT EXISTS member_accounts (
  username TEXT PRIMARY KEY, password TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
- permissions TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT ''
+ permissions TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT '', sso_id TEXT NOT NULL DEFAULT '', sso_auto_link_blocked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS login_sessions (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL, username TEXT NOT NULL,
+ last_activity REAL NOT NULL, expires_at REAL NOT NULL, sso_identity TEXT NOT NULL DEFAULT '', last_response REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS keycloak_links (
+ identity_key TEXT PRIMARY KEY, issuer TEXT NOT NULL, subject TEXT NOT NULL,
+ username TEXT NOT NULL UNIQUE, account_key TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS keycloak_flows (
+ id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, data TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS permission_groups (
  id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, permissions TEXT NOT NULL DEFAULT ''
@@ -113,7 +124,10 @@ CREATE TABLE IF NOT EXISTS weekly_instances (
 # Added after the initial release; existing databases need an in-place upgrade.
 COLUMNS = {'shifts': {'special': 'INTEGER NOT NULL DEFAULT 0'},
            'member_accounts': {'permissions': "VARCHAR(191) NOT NULL DEFAULT ''",
-                               'group_id': "VARCHAR(64) NOT NULL DEFAULT ''"},
+                               'group_id': "VARCHAR(64) NOT NULL DEFAULT ''",
+                               'sso_id': "VARCHAR(64) NOT NULL DEFAULT ''",
+                               'sso_auto_link_blocked': 'TINYINT NOT NULL DEFAULT 0'},
+           'login_sessions': {'sso_identity': "VARCHAR(64) NOT NULL DEFAULT ''", 'last_response': 'DOUBLE NOT NULL DEFAULT 0'},
            'attendance': {'status_override': "VARCHAR(16) NOT NULL DEFAULT ''"},
            'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0', 'status': 'TINYINT NOT NULL DEFAULT 2'}}
 
@@ -128,8 +142,9 @@ def backend() -> str:
 
 class MysqlResult:
     def __init__(self, cursor):
-        self.rowcount = cursor.rowcount
-        self.lastrowid = cursor.lastrowid
+        # PyMySQL does not execute empty batches and leaves lastrowid unset.
+        self.rowcount = max(0, cursor.rowcount)
+        self.lastrowid = getattr(cursor, 'lastrowid', None)
         self.rows = list(cursor.fetchall()) if cursor.description else []
         self.offset = 0
 
@@ -218,6 +233,9 @@ def connect():
                             "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()"
                             " AND TABLE_NAME=? AND COLUMN_NAME=?", (table, column)).fetchone():
                             conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                            if table == "login_sessions" and column == "sso_identity":
+                                # Older leases do not identify their login method; require reauthentication.
+                                conn.execute("DELETE FROM login_sessions")
             except Exception:
                 conn.close()
                 raise
@@ -240,6 +258,9 @@ def connect():
                         if isinstance(definition, str):
                             definition = definition.replace('VARCHAR(191)', 'TEXT')
                         conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                        if table == "login_sessions" and column == "sso_identity":
+                            # Older leases do not identify their login method; require reauthentication.
+                            conn.execute("DELETE FROM login_sessions")
             _conn = conn
             _migrate_json(conn)
             _retire_legacy_json()
@@ -263,6 +284,9 @@ def upgrade_table(table):
                 if not isinstance(_conn, MysqlConnection):
                     definition = definition.replace('VARCHAR(191)', 'TEXT').replace('TINYINT', 'INTEGER')
                 _conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                if table == "login_sessions" and column == "sso_identity":
+                    # Older leases do not identify their login method; require reauthentication.
+                    _conn.execute("DELETE FROM login_sessions")
 
 
 @contextmanager

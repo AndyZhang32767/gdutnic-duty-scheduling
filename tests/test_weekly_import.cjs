@@ -123,3 +123,15 @@ test('duplicate and out-of-range shift numbers are rejected', () => {
   assert.throws(() => rosterFromCsv(`${header}\n第2班,甲\n第二班,乙`), /重复/);
   assert.throws(() => rosterFromCsv(`${header}\n5,甲`), /仅支持/);
 });
+
+test('script, formula and prototype payloads stay plain roster names', () => {
+  globalThis.rosterExecuted = false;
+  const payloads = ['<img onerror=rosterExecuted=true>', '=1+1', '__proto__', 'constructor'];
+  for (const payload of payloads) {
+    const rows = rosterFromCsv(`${header}\n第1班,${payload},,,,,,`);
+    assert.deepEqual(rows[0].days[0], [payload]);
+  }
+  assert.equal(globalThis.rosterExecuted, false);
+  assert.equal(Object.prototype.rosterExecuted, undefined);
+  delete globalThis.rosterExecuted;
+});

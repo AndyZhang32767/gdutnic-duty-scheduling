@@ -22,7 +22,7 @@ FILE = 'root_admin.json'
 # full set even if the editable tree changes or a stray write damages its row.
 ALL_PERMISSIONS = ('duty', 'member_field', 'field_confirm', 'overview', 'weekly', 'special',
                    'swap', 'members', 'field', 'settings', 'logs', 'data', 'permission_groups',
-                   'attendance_edit', 'rules', 'clock', 'smtp', 'push')
+                   'attendance_edit', 'rules', 'clock', 'smtp', 'push', 'sso', 'checkin_manage')
 
 _generated = None
 

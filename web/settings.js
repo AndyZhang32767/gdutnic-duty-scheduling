@@ -29,6 +29,7 @@ $('rulesForm').onsubmit = async e => {
   try {
     const saved = await api('/api/admin/rules', 'PUT', body);
     rules = saved;
+    window.announceCheckinSettings?.();
     $('rulesStatus').textContent = '值班时间设置已保存，签到页面会自动使用新规则。';
   } catch (err) { $('rulesStatus').textContent = err.message; }
   finally { submit.disabled = false; }
@@ -88,7 +89,9 @@ $('clockForm').onsubmit = async e => {
       hour: Number($('clockHour').value || 0),
       minute: Number($('clockMinute').value || 0),
     });
+    syncClock(state);
     renderClock(state);
+    window.announceCheckinSettings?.();
     $('clockStatus').textContent = automatic
       ? '已恢复自动设置，使用真实时间。'
       : `已设为手动时间，从 ${state.date} ${String(state.hour).padStart(2, '0')}:${String(state.minute).padStart(2, '0')}:00 开始计时。`;
@@ -101,10 +104,18 @@ $('clockForm').onsubmit = async e => {
 function applySettingsPermissions() {
   const can = key => window[key] !== false;
   if ($('rulesForm')) $('rulesForm').hidden = !can('canRules');
+  if ($('sessionTimeoutForm')) $('sessionTimeoutForm').hidden = !can('canRules');
   if ($('clockForm')) $('clockForm').hidden = !can('canClock');
   if ($('smtpForm')) $('smtpForm').hidden = !can('canSmtp');
+  const held = window.adminPermissions;
+  const allowed = key => !Array.isArray(held) || held.includes(key);
+  $('checkinSettingsSection').hidden = !allowed('checkin_manage');
+  $('ssoSettingsSection').hidden = !allowed('sso');
+  if ($('settingsPage').hidden) return;
+  if (allowed('checkin_manage')) window.loadCheckinAccess?.();
+  if (allowed('sso')) window.loadSsoSettings?.();
   if (can('canSmtp')) loadSmtp();
-  if (can('canRules')) loadRules();
+  if (can('canRules')) { loadRules(); loadSessionTimeout(); }
   if (can('canClock')) {
     loadClock();
     clearInterval(clockTimer);
@@ -114,6 +125,13 @@ function applySettingsPermissions() {
   }
 }
 window.applySettingsPermissions = applySettingsPermissions;
+
+// A restored session can resolve before the settings modules finish loading.
+document.addEventListener('DOMContentLoaded', () => {
+  const wasVisible = !$('settingsPage').hidden;
+  if (Array.isArray(window.adminPermissions)) window.applyPermissions?.(window.adminPermissions);
+  if (wasVisible) applySettingsPermissions();
+}, {once: true});
 
 const originalSettingsClick = $('settingsTab').onclick;
 $('settingsTab').onclick = () => {
@@ -209,3 +227,27 @@ $('smtpTest').onclick = async () => {
     button.disabled = false;
   }
 };
+
+async function loadSessionTimeout() {
+  try {
+    const value = await api('/api/admin/session-timeout');
+    for (const key of ['member_minutes', 'admin_minutes', 'member_response_seconds', 'admin_response_seconds']) $('sessionTimeoutForm').elements[key].value = value[key];
+    $('sessionTimeoutStatus').textContent = '';
+  } catch (error) { $('sessionTimeoutStatus').textContent = error.message; }
+}
+$('sessionTimeoutForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, submit = form.querySelector('[type=submit]');
+  submit.disabled = true;
+  try {
+    await api('/api/admin/session-timeout', 'PUT', {
+      member_minutes: Number(form.elements.member_minutes.value),
+      admin_minutes: Number(form.elements.admin_minutes.value),
+      member_response_seconds: Number(form.elements.member_response_seconds.value),
+      admin_response_seconds: Number(form.elements.admin_response_seconds.value)
+    });
+    $('sessionTimeoutStatus').textContent = '自动退出设置已保存，对当前登录会话立即生效。';
+    window.dispatchEvent(new Event('session-timeout-changed'));
+  } catch (error) { $('sessionTimeoutStatus').textContent = error.message; }
+  finally { submit.disabled = false; }
+});

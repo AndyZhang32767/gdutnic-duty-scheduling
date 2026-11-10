@@ -520,6 +520,8 @@ async function showAuth(mode) {
   els.authTitle.textContent = mode === "register" ? "注册管理员" : "管理员登录";
   els.authHint.textContent = "请输入用户名和密码";
   els.authSubmit.textContent = mode === "register" ? "注册" : "登录";
+  const ssoButton = document.querySelector('[data-keycloak-login="admin"]');
+  if (ssoButton) ssoButton.hidden = mode === "register" || ssoButton.dataset.ssoEnabled !== "true";
   els.adminPass.autocomplete = mode === "register" ? "new-password" : "current-password";
   if (document.body.classList.contains("admin-ready")) {
     els.workspace.classList.remove("is-visible");

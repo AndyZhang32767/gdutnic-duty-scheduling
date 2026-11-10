@@ -1,5 +1,6 @@
 let memberItems = [], deletingMember = '', memberMeta = {groups: [], me: '', can_grant: false};
 let memberQuery = '';
+const unlinkingSso = new Set();
 const memberMatches = member => !memberQuery || member.username.toLowerCase().includes(memberQuery);
 
 function renderMembers() {
@@ -10,6 +11,7 @@ function renderMembers() {
     title.append(el('h2', '', member.username), el('p', '', member.active ? '账号已启用' : '账号已停用'));
     const tags = el('div', 'permission-tags');
     tags.append(el('span', 'permission-tag', member.group_name || '会员'));
+    if (member.sso_bound) tags.append(el('span', 'permission-tag', '已绑定 GDUTNIC'));
     title.append(tags);
     const actions = el('div', 'actions');
     actions.append(
@@ -33,6 +35,17 @@ function renderMembers() {
         finally { deletingMember = ''; }
       })
     );
+    if (member.sso_bound) actions.prepend(button('解绑SSO', 'delete', async () => {
+      if (unlinkingSso.has(member.username)) return;
+      if (!confirm(`确认解除「${member.username}」的 GDUTNIC SSO 绑定？该账号的 SSO 登录将失效，重新绑定需验证本地密码。`)) return;
+      unlinkingSso.add(member.username);
+      try {
+        await api('/api/admin/members/sso?username=' + encodeURIComponent(member.username), 'DELETE');
+        await loadMembers();
+        $('membersStatus').textContent = `已解除「${member.username}」的 SSO 绑定。`;
+      } catch (error) { $('membersStatus').textContent = error.message; }
+      finally { unlinkingSso.delete(member.username); }
+    }));
     row.append(title, actions);
     $('memberList').append(row);
   }
@@ -69,7 +82,7 @@ async function loadMembers() {
 function updateMemberGroupPreview() {
   const group = memberMeta.groups.find(item => item.id === $('permissionGroupSelect').value);
   $('permissionGroupPreview').textContent = group
-    ? `${group.name} · 可访问 ${group.permissions.length} 个页面。修改组内访问范围请前往权限管理。` : '';
+    ? `${group.name} · 可访问 ${group.permissions.length} 个页面。修改组内访问范围请前往权限组管理。` : '';
 }
 function openPermission(member) {
   $('permissionTitle').textContent = `更改权限 · ${member.username}`;

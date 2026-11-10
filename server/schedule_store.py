@@ -1,7 +1,7 @@
 """Persistent duty schedules and atomic, repeat-safe attendance."""
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from server import db, system_clock
+from server import attendance_live, db, system_clock
 
 TZ = ZoneInfo('Asia/Shanghai')
 
@@ -30,7 +30,9 @@ def list_day(day, name=None):
             sql += ' AND EXISTS (SELECT 1 FROM attendance WHERE shift_id=shifts.id AND name=?)'
             args.append(name)
         rows = conn.execute(sql + ' ORDER BY day,start,id', args).fetchall()
-        grouped = _members_many(conn, [row['id'] for row in rows], name)
+        # Membership limits which shifts are visible; each visible shift still
+        # includes the whole team so cards and the timeline show coworkers.
+        grouped = _members_many(conn, [row['id'] for row in rows])
         for row in rows:
             item = dict(row)
             item['members'] = grouped.get(row['id'], [])
@@ -112,7 +114,7 @@ def validate_shift(body):
     return day, start, end, location, note, names
 
 
-def save(body, shift_id=None):
+def save(body, shift_id=None, *, expected_special=None):
     day, start, end, location, note, names = validate_shift(body)
     special = int(bool(body.get('special')))
     with db.write() as conn:
@@ -123,7 +125,7 @@ def save(body, shift_id=None):
                 (day, start, end, location, note, special)).lastrowid
         else:
             old = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
-            if not old:
+            if not old or (expected_special is not None and bool(old['special']) != expected_special):
                 raise LookupError('班次不存在')
             special = int(old['special'])
             checked = [r['name'] for r in conn.execute(
@@ -144,10 +146,13 @@ def save(body, shift_id=None):
     return shift_id
 
 
-def delete(shift_id):
+def delete(shift_id, *, expected_special=None):
     with db.write() as conn:
         init(conn)
-        if not conn.execute('DELETE FROM shifts WHERE id=?', (shift_id,)).rowcount:
+        # Include the resource type in the mutation itself to enforce the scope.
+        clause = 'id=?' if expected_special is None else 'id=? AND special=?'
+        params = (shift_id,) if expected_special is None else (shift_id, int(expected_special))
+        if not conn.execute(f'DELETE FROM shifts WHERE {clause}', params).rowcount:
             raise LookupError('班次不存在')
 
 
@@ -320,4 +325,6 @@ def check_in_with_chain(shift_id, name, now=None):
                 conn.execute('UPDATE attendance SET checked_at=? WHERE shift_id=? AND name=?',
                              (stamp, partner['id'], name))
                 chained.append(partner['id'])
+        if not row['checked_at'] or chained:
+            attendance_live.publish(conn)
         return stamp, chained

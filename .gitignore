@@ -18,6 +18,7 @@ Thumbs.db
 .vscode/
 parment/
 output/
+.playwright-cli/
 
 !.env.example
 # Runtime data and imported rosters never belong in the repository.

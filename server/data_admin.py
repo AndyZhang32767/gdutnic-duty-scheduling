@@ -112,7 +112,7 @@ TABLES = {
     },
 }
 # Settings keys whose values are credentials, not readable configuration.
-SECRET_SETTING_PARTS = ('mcp', 'qq', 'oauth', 'password', 'secret', 'key')
+SECRET_SETTING_PARTS = ('mcp', 'qq', 'oauth', 'password', 'secret', 'key', 'model', 'smtp', 'sso', 'keycloak')
 
 PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
@@ -321,6 +321,8 @@ def _reject_root(name, keys):
 def update_row(name, keys, values, actor=''):
     """Update whitelisted columns of exactly one row."""
     meta = _table(name)
+    if name == 'settings' and _is_secret(name, (keys or {}).get('key'), None):
+        raise ValueError('含凭据的设置只能通过专用配置入口修改')
     if not meta['editable']:
         raise ValueError('这张表不支持在此修改')
     if not isinstance(values, dict) or not values:

@@ -5,12 +5,12 @@ import threading
 import time
 from collections import OrderedDict
 
-# Thirty days is intentionally gone; every authenticated session expires after four hours.
+# Cookie envelopes last four hours; server-side idle leases enforce inactivity limits.
 SESSION_TTL = 4 * 60 * 60
 
 # Failed attempts per key inside the window before the caller is throttled.
 MAX_ATTEMPTS = 8
-WINDOW_SECONDS = 15 * 60
+WINDOW_SECONDS = 10 * 60
 
 
 class AttemptLimiter:
@@ -19,10 +19,15 @@ class AttemptLimiter:
         self.window = window
         self._lock = threading.Lock()
         self._hits: OrderedDict[str, list[float]] = OrderedDict()
+        self._blocked_until: dict[str, float] = {}
 
     def _recent(self, key):
         """Return stored hits, dropping anything older than the window."""
         now = time.monotonic()
+        deadline = self._blocked_until.get(key)
+        if deadline is not None and now >= deadline:
+            self._blocked_until.pop(key, None)
+            self._hits.pop(key, None)
         hits = self._hits.get(key)
         if not hits:
             return []
@@ -36,21 +41,28 @@ class AttemptLimiter:
 
     def blocked(self, key):
         with self._lock:
-            return len(self._recent(key)) >= self.max_attempts
+            self._recent(key)
+            return time.monotonic() < self._blocked_until.get(key, 0)
 
     def fail(self, key):
         with self._lock:
             hits = self._recent(key)
+            if time.monotonic() < self._blocked_until.get(key, 0):
+                return
             hits.append(time.monotonic())
             self._hits[key] = hits
             self._hits.move_to_end(key)
+            if len(hits) >= self.max_attempts:
+                self._blocked_until[key] = time.monotonic() + self.window
             # Bound memory: only the newest few thousand keys are worth remembering.
             while len(self._hits) > 4096:
-                self._hits.popitem(last=False)
+                removed, _ = self._hits.popitem(last=False)
+                self._blocked_until.pop(removed, None)
 
     def reset(self, key):
         with self._lock:
             self._hits.pop(key, None)
+            self._blocked_until.pop(key, None)
 
 
 def client_key(request) -> str:

@@ -204,7 +204,7 @@ class MysqlIntegrationTest(unittest.TestCase):
         own = c.get('/api/schedules?day=2026-11-02').json()['items']
         self.assertEqual([s['id'] for s in own], [sid])
         self.assertEqual([{k: v for k, v in m.items() if k != 'status'} for m in own[0]['members']],
-                         [{'name': '张三', 'checked_at': None}])
+                         [{'name': '张三', 'checked_at': None}, {'name': '李四', 'checked_at': None}])
         self.assertEqual(c.delete('/api/admin/schedules').status_code, 401)
         self.assertEqual(c.post('/api/admin/special-schedules', json=dict(day='2026-11-20',start='20:00',end='22:00',members=['李四'])).status_code, 401)
         self.assertEqual(c.get('/api/special-schedules').status_code, 200)
@@ -287,3 +287,20 @@ class MysqlIntegrationTest(unittest.TestCase):
             c.execute('INSERT INTO attendance(shift_id,name,checked_at) VALUES(?,?,NULL)',(999,'张三'))
         with self.assertRaises(pymysql.IntegrityError): migrate(source)
         with db.read() as c: self.assertEqual(c.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n'],0)
+
+    def test_mysql_heartbeat_is_independent_of_idle_and_uses_role_limits(self):
+        from server import session_policy
+        with patch.object(session_policy.time, 'time', return_value=2000000000.0) as clock:
+            limits = session_policy.save({'member_minutes':120,'admin_minutes':30,
+                'member_response_seconds':45,'admin_response_seconds':120})
+            member = session_policy.create('member','heartbeat-member')
+            admin = session_policy.create('admin','heartbeat-admin')
+            original = session_policy.state(member,'member')['expires_at']
+            clock.return_value += 30
+            self.assertTrue(session_policy.heartbeat(member,'member','heartbeat-member'))
+            self.assertEqual(session_policy.state(member,'member')['expires_at'],original)
+            self.assertEqual(limits['admin_response_seconds'],120)
+            clock.return_value += 45
+            self.assertEqual(session_policy.reap_unresponsive(),1)
+            self.assertIsNone(session_policy.state(member,'member'))
+            self.assertIsNotNone(session_policy.state(admin,'admin'))

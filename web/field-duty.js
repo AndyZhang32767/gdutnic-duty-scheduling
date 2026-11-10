@@ -1,14 +1,12 @@
 // Member-side field duty (外勤) registration for the current month.
-// `page` is 'duty', 'field' or 'confirm'.
+// Field registration shares the member overview with attendance.
 function showMemberPage(page) {
   if ($('scheduleListPage')) $('scheduleListPage').hidden = page !== 'scheduleList';
   if ($('scheduleListTab')) $('scheduleListTab').classList.toggle('active', page === 'scheduleList');
   $('dutyPage').hidden = page !== 'duty';
-  $('fieldPage').hidden = page !== 'field';
   const confirm = $('fieldConfirmPage');
   if (confirm) confirm.hidden = page !== 'confirm';
   $('dutyTab').classList.toggle('active', page === 'duty');
-  $('fieldTab').classList.toggle('active', page === 'field');
   if ($('fieldConfirmTab')) $('fieldConfirmTab').classList.toggle('active', page === 'confirm');
 }
 
@@ -24,6 +22,7 @@ function setFieldLabel(text) {
 }
 
 function paintFieldStatus(data) {
+  window.setNetworkAccess?.(data.network_access);
   const button = $('fieldButton');
   const status = Number(data.status || 0);
   $('fieldCount').textContent = status === 2 ? '1' : '0';
@@ -33,6 +32,7 @@ function paintFieldStatus(data) {
     : (button.matches(':hover') ? FIELD_HOVER : FIELD_IDLE));
   // Registering is a one-way 0 → 1 step; the button stays disabled afterwards.
   button.disabled = status !== 0;
+  window.applyNetworkButton?.(button, 'field', status === 0 ? $('fieldButtonText') : null);
   const when = data.registered_at
     ? new Date(data.registered_at).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}) : '';
   $('fieldStatus').textContent = status === 2 ? `本月已于 ${when} 登记并确认外勤。`
@@ -40,27 +40,36 @@ function paintFieldStatus(data) {
 }
 
 async function loadFieldDuty() {
+  $('fieldButton').disabled = true;
   $('fieldStatus').textContent = '';
   try { paintFieldStatus(await api('/api/member/field-duty')); }
   catch (err) { $('fieldStatus').textContent = err.message; }
 }
 
 const fieldIdle = () => !$('fieldButton').classList.contains('registered')
-  && !$('fieldButton').classList.contains('pending');
+  && !$('fieldButton').classList.contains('pending') && !$('fieldButton').disabled;
 $('fieldButton').addEventListener('mouseenter', () => { if (fieldIdle()) setFieldLabel(FIELD_HOVER); });
 $('fieldButton').addEventListener('mouseleave', () => { if (fieldIdle()) setFieldLabel(FIELD_IDLE); });
 // Pressing shows the confirm copy immediately; the pending copy lands with the response.
 $('fieldButton').addEventListener('pointerdown', () => { if (fieldIdle()) setFieldLabel(FIELD_HOVER); });
 
-$('dutyTab').onclick = () => { showMemberPage('duty'); load(); };
-$('fieldTab').onclick = () => { showMemberPage('field'); loadFieldDuty(); };
+$('dutyTab').onclick = () => { showMemberPage('duty'); load(); loadFieldDuty(); };
 $('fieldButton').onclick = async () => {
   const button = $('fieldButton');
-  if (button.classList.contains('registered') || button.classList.contains('pending')) return;
+  if (button.disabled || button.classList.contains('registered') || button.classList.contains('pending')) return;
   try {
+    button.disabled = true;
     paintFieldStatus(await api('/api/member/field-duty', 'POST'));
   } catch (err) {
     $('fieldStatus').textContent = err.message;
     setFieldLabel(button.matches(':hover') ? FIELD_HOVER : FIELD_IDLE);
+    await loadFieldDuty();
+    $('fieldStatus').textContent = err.message;
   }
 };
+
+window.addEventListener('network-access-change', () => {
+  if (!$('workspace').hidden && !$('dutyPage').hidden) loadFieldDuty();
+});
+
+$('refresh').onclick = () => { load(); loadFieldDuty(); };

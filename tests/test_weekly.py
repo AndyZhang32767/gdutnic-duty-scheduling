@@ -159,3 +159,18 @@ class WeeklyTest(unittest.TestCase):
             weekly_store.publish_until('2026-11-01', '2026-11-10')
         with self.assertRaises(ValueError):
             weekly_store.publish_until('2026-11-05', '2026-11-10')
+
+    def test_skipped_publication_keeps_unchecked_conflicting_shifts(self):
+        roster = self.roster()
+        for slot in roster['slots']:
+            slot['days'] = [[] for _ in range(7)]
+        roster['slots'][0]['days'][0] = ['新排班']
+        weekly_store.save(roster)
+        unchecked = schedule_store.save(dict(day='2026-11-02', start='08:00', end='09:00', members=['甲']))
+        checked = schedule_store.save(dict(day='2026-11-02', start='09:00', end='10:00', members=['乙']))
+        with db.write() as conn:
+            conn.execute('INSERT INTO weekly_instances(day,slot,shift_id) VALUES(?,?,?)', ('2026-11-02', 0, unchecked))
+        schedule_store.check_in_with_chain(checked, '乙', now=self.now.replace(hour=9, minute=5))
+        result = weekly_store.publish('2026-11-02')
+        self.assertEqual(result, {'created': 0, 'skipped': 1})
+        self.assertEqual({row['id'] for row in schedule_store.list_day('2026-11-02')}, {unchecked, checked})

@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/schedule.css">
   <link rel="stylesheet" href="/static/component-icons.css">
+<link rel="stylesheet" href="/static/auth-background.css">
+<script src="/static/auth-background.js" defer></script>
 </head>
 <body data-admin="true">
 <section id="authCard" class="admin-board">
@@ -21,7 +23,7 @@
     <label class="outlined-field"><input name="username" autocomplete="username" placeholder=" " required><span>用户名</span></label>
     <label class="outlined-field"><input name="password" type="password" autocomplete="current-password" placeholder=" " required><span>密码</span></label>
     <p id="authStatus" class="admin-auth-status" role="alert"></p>
-    <button id="authSubmit" class="btn primary" data-icon="login">登录</button>
+    <div class="auth-actions"><button type="button" class="btn tonal" data-keycloak-login="admin" hidden><img class="sso-org-icon" src="/icon/gdutnic.png" alt="" aria-hidden="true"><span>通过GDUTNIC</span></button><button id="authSubmit" class="btn primary" data-icon="login">登录</button></div>
   </form>
 </section>
 <div id="workspace" class="ga-app is-visible" hidden>
@@ -36,9 +38,9 @@
       <button type="button" id="specialTab" class="ga-nav-item">特殊排班</button>
       <button type="button" id="swapTab" class="ga-nav-item">调换值班</button>
       <button type="button" id="fieldTab" class="ga-nav-item">外勤管理</button>
-      <button type="button" id="pushTab" class="ga-nav-item">消息推送</button>
       <button type="button" id="membersTab" class="ga-nav-item">用户管理</button>
-      <button type="button" id="permissionGroupsTab" class="ga-nav-item">权限管理</button>
+      <button type="button" id="permissionGroupsTab" class="ga-nav-item">权限组管理</button>
+      <button type="button" id="pushTab" class="ga-nav-item">消息推送</button>
       <button type="button" id="logsTab" class="ga-nav-item">查看日志</button>
       <button type="button" id="dataTab" class="ga-nav-item">数据管理</button>
       <button type="button" id="settingsTab" class="ga-nav-item">其他设置</button>
@@ -175,7 +177,7 @@
 
       <section id="permissionGroupsPage" hidden>
         <div class="hero">
-          <div><h1 data-icon="shield-account-outline">权限管理</h1><p>以权限组统一管理访问范围。展开权限组，选择成员可以访问的页面。</p></div>
+          <div><h1 data-icon="shield-account-outline">权限组管理</h1><p>以权限组统一管理访问范围。展开权限组，选择成员可以访问的页面。</p></div>
           <button id="addPermissionGroup" class="btn primary" data-icon="plus">新建权限组</button>
         </div>
         <p id="permissionGroupsStatus" role="status" aria-live="polite"></p>
@@ -234,7 +236,7 @@
       </section>
 
       <section id="settingsPage" hidden>
-        <div class="hero"><div><h1 data-icon="tune-variant">其他设置</h1><p>调整值班签到的时间窗口。</p></div></div>
+        <div class="hero"><div><h1 data-icon="tune-variant">其他设置</h1><p>管理签到规则、打卡网络、SSO、无操作登录时限与系统设置。</p></div></div>
         <form id="rulesForm" method="post" class="card rules-card">
           <h2 data-icon="clock-outline">值班时间</h2>
           <p class="hint">以下时间均相对于班次开始时间计算。</p>
@@ -246,6 +248,25 @@
           <p class="hint">三个时间都从班次开始时间起算。提前打卡：开始前多少分钟起显示“确认到岗签到”。迟到：开始后多少分钟内的签到记为迟到。旷班：开始后超过多少分钟仍未签到，或超过该时间才签到，都记为旷班；因此旷班时间必须大于迟到时间。</p>
           <p id="rulesStatus" role="status" aria-live="polite"></p>
           <button type="submit" class="btn primary" data-icon="content-save-outline">保存设置</button>
+        </form>
+
+        <form id="sessionTimeoutForm" method="post" class="card rules-card" hidden>
+          <h2 data-icon="clock-outline">无操作自动退出</h2>
+          <p class="hint">超过设定时间没有鼠标、键盘或触摸操作，将自动退出对应登录并刷新页面。后台刷新数据不会延长登录时间。</p>
+          <div class="rules-grid">
+            <label>成员页面无操作时限（分钟）<input name="member_minutes" type="number" min="1" max="240" step="1" value="120" required></label>
+            <label>管理页面无操作时限（分钟）<input name="admin_minutes" type="number" min="1" max="240" step="1" value="30" required></label>
+          </div>
+          <p class="hint">默认成员端 120 分钟、管理端 30 分钟。可设置 1～240 分钟；在同一浏览器的任一同端标签页操作都会续期。</p>
+          <h3 class="settings-subheading" data-icon="clock-alert-outline">无响应自动退出</h3>
+          <p class="hint">全局检测已登录设备的心跳。超过以下时限未收到响应，撤销该设备的登录；心跳不会延长上方的无操作时限。</p>
+          <div class="rules-grid">
+            <label>成员页面无响应时限（秒）<input name="member_response_seconds" type="number" min="30" max="3600" step="1" value="90" required></label>
+            <label>管理页面无响应时限（秒）<input name="admin_response_seconds" type="number" min="30" max="3600" step="1" value="90" required></label>
+          </div>
+          <p class="hint">默认均为 90 秒，可设置 30～3600 秒。同一浏览器同一端的标签页共享心跳，其他设备独立检测。</p>
+          <p id="sessionTimeoutStatus" role="status" aria-live="polite"></p>
+          <button type="submit" class="btn primary" data-icon="content-save-outline">保存自动退出设置</button>
         </form>
 
         <form id="clockForm" method="post" class="card rules-card">
@@ -291,6 +312,56 @@
             <button type="button" id="smtpTest" class="btn tonal" data-icon="send">发送测试邮件</button>
           </div>
         </form>
+
+      <section id="checkinSettingsSection" hidden>
+        <form id="checkinAccessForm" class="card checkin-access-form">
+          <h2 data-icon="calendar-check-outline">打卡设置</h2>
+          <p class="hint">分别设置打卡和外勤登记可使用的网络。</p>
+          <p class="hint">每行填写一个 IP、网段或 localhost。允许：仅列表内的地址可用；排除：列表内的地址不可用。排除列表留空表示不限制，允许列表留空表示全部禁用。</p>
+          <p class="hint">支持 192.168.1.10、192.168.1.0/24、192.168.1.0/255.255.255.0 和 IPv6。localhost 匹配 127.0.0.0/8 与 ::1，以服务器识别的来源地址为准。</p>
+          <div class="checkin-access-grid">
+            <fieldset><legend>打卡</legend>
+              <label for="checkinAccessMode">匹配方式</label><select id="checkinAccessMode" name="checkin_mode"><option value="exclude">排除以下地址</option><option value="allow">仅允许以下地址</option></select>
+              <label for="checkinAccessEntries">IP / 掩码（一行一个）</label><textarea id="checkinAccessEntries" name="checkin_entries" rows="8" spellcheck="false" placeholder="192.168.1.0/24&#10;localhost" maxlength="20000"></textarea>
+            </fieldset>
+            <fieldset><legend>外勤</legend>
+              <label for="fieldAccessMode">匹配方式</label><select id="fieldAccessMode" name="field_mode"><option value="exclude">排除以下地址</option><option value="allow">仅允许以下地址</option></select>
+              <label for="fieldAccessEntries">IP / 掩码（一行一个）</label><textarea id="fieldAccessEntries" name="field_entries" rows="8" spellcheck="false" placeholder="192.168.1.0/24&#10;localhost" maxlength="20000"></textarea>
+            </fieldset>
+          </div><p id="checkinAccessPeer" class="hint"></p><p id="checkinAccessStatus" role="status" aria-live="polite"></p>
+          <button type="submit" class="btn primary">保存网络规则</button>
+        </form>
+      </section>
+      <section id="ssoSettingsSection" hidden>
+        <form id="ssoConfigForm" class="card sso-config" method="post">
+          <h2 data-icon="shield-account-outline">SSO 设置</h2>
+          <p class="hint">连接 GDUTNIC 统一身份认证，让成员使用同一个账号登录。</p>
+          <fieldset id="ssoFields" disabled>
+            <section class="sso-enable-card">
+              <div><h3>在登录页显示 SSO</h3><p class="hint">默认关闭。开启并保存完整配置后，登录页会显示“通过GDUTNIC”。</p></div>
+              <label class="sso-toggle"><input id="ssoEnabled" type="checkbox" role="switch" aria-label="在登录页显示 SSO"><span aria-hidden="true"></span></label>
+            </section>
+            <section class="sso-config-card">
+              <h3>身份认证服务</h3><p class="hint">填写 Keycloak 为本应用分配的地址和客户端信息。</p>
+              <div class="sso-grid">
+                <div class="sso-wide"><label class="outlined-field"><input id="ssoIssuer" type="url" placeholder=" " maxlength="2048"><span>身份提供方地址（Issuer）</span></label><p class="hint">例如 https://sso.gdutnic.com/realms/nic，包含 Realm 名称。</p></div>
+                <div><label class="outlined-field"><input id="ssoClientId" type="text" placeholder=" " autocomplete="off" maxlength="2048"><span>客户端标识（Client ID）</span></label></div>
+                <div><label for="ssoClientType">客户端类型</label><select id="ssoClientType"><option value="public">公开客户端 · 无需密钥</option><option value="confidential">机密客户端 · 使用密钥</option></select></div>
+                <div id="ssoSecretField" class="sso-wide" hidden><label class="outlined-field"><input id="ssoClientSecret" type="password" placeholder=" " autocomplete="new-password" maxlength="4096"><span>客户端密钥（Client Secret）</span></label><p id="ssoSecretHint" class="hint">填写 Keycloak 为此客户端生成的密钥。</p><label id="ssoClearSecretRow" class="review-check" hidden><input id="ssoClearSecret" type="checkbox"><span>清除已保存的密钥</span></label></div>
+              </div>
+            </section>
+            <section class="sso-config-card">
+              <h3>登录回调与账号匹配</h3>
+              <label class="outlined-field"><input id="ssoRedirectUri" type="url" placeholder=" " maxlength="2048"><span>登录回调地址（Redirect URI）</span></label>
+              <p class="hint">请将完整地址同时添加到 Keycloak 的“有效重定向 URI”。路径为 /api/auth/keycloak/callback。</p>
+              <div class="sso-match-row"><label for="ssoClaimSelect">自动匹配本地账号的字段</label><select id="ssoClaimSelect"><option value="">不自动匹配 · 验证本地密码后绑定</option><option value="preferred_username">登录用户名（preferred_username）</option><option value="name">姓名（name）</option><option value="custom">其他组织维护的字段</option></select></div>
+              <label id="ssoCustomClaimField" class="outlined-field" hidden><input id="ssoCustomClaim" type="text" placeholder=" " maxlength="255"><span>自定义字段名称</span></label>
+              <p class="hint">首次接入建议先使用密码绑定，确认实际返回字段后再开启自动匹配。仅使用由组织维护、用户不能任意修改的字段；字段值需与本地用户名一致。</p>
+            </section>
+            <div class="sso-actions"><p id="ssoConfigStatus" role="status" aria-live="polite"></p><div class="actions"><button id="ssoTest" type="button" class="btn tonal">测试服务连接</button><button id="ssoSave" type="submit" class="btn primary" data-icon="content-save-outline">保存 SSO 配置</button></div></div>
+          </fieldset>
+        </form>
+      </section>
 
         <form id="rootPasswordForm" method="post" class="card rules-card" hidden>
           <h2 data-icon="shield-account-outline">原始管理员密码</h2>
@@ -404,7 +475,7 @@
       <dialog id="permissionDialog">
         <form id="permissionForm">
           <div class="section-head"><h2 id="permissionTitle">更改权限</h2><button type="button" id="closePermission" class="btn tonal" data-icon="close">关闭</button></div>
-          <p class="hint">选择该账号所属的权限组。访问范围统一在「权限管理」中维护。</p>
+          <p class="hint">选择该账号所属的权限组。访问范围统一在「权限组管理」中维护。</p>
           <label>所属权限组<select id="permissionGroupSelect" required></select></label>
           <p id="permissionGroupPreview" class="hint"></p>
           <p id="permissionStatus" role="alert"></p>
@@ -479,10 +550,14 @@
 <script src="/static/permission-groups.js"></script>
 <script src="/static/members.js"></script>
 <script src="/static/settings.js"></script>
+<script src="/static/checkin-access.js"></script>
+<script src="/static/sso-settings.js"></script>
 <script src="/static/logs.js"></script>
 <script src="/static/data-admin.js"></script>
 <script src="/static/field-admin.js"></script>
 <script src="/static/push-layout.js"></script>
 <script src="/static/push.js"></script>
+<script src="/static/keycloak-login.js"></script>
+<script src="/static/idle-session.js"></script><script src="/static/attendance-live.js"></script>
 </body>
 </html>

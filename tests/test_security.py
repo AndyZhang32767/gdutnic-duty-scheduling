@@ -40,3 +40,19 @@ class LimiterTest(unittest.TestCase):
 
     def test_session_ttl_is_four_hours(self):
         self.assertEqual(security.SESSION_TTL, 4 * 60 * 60)
+
+    def test_lockout_lasts_ten_minutes_from_threshold(self):
+        limiter = security.AttemptLimiter()
+        with patch.object(security.time, 'monotonic', return_value=100.0):
+            for _ in range(7):
+                limiter.fail('admin')
+        with patch.object(security.time, 'monotonic', return_value=200.0):
+            limiter.fail('admin')
+            self.assertTrue(limiter.blocked('admin'))
+        with patch.object(security.time, 'monotonic', return_value=799.0):
+            self.assertTrue(limiter.blocked('admin'))
+            limiter.fail('admin')  # Blocked requests must not extend the deadline.
+        with patch.object(security.time, 'monotonic', return_value=800.0):
+            self.assertFalse(limiter.blocked('admin'))
+            limiter.fail('admin')
+            self.assertFalse(limiter.blocked('admin'))

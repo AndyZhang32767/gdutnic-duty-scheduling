@@ -16,13 +16,13 @@ function renderPermissionGroups() {
     const title = el('div', 'permission-group-title');
     title.append(el('h2', '', group.name));
     if (group.default) title.append(el('span', 'permission-tag', '默认权限组'));
-    heading.append(title, el('p', 'hint', `${group.member_count} 位成员 · 已开放 ${group.permissions.length} 个页面`));
+    heading.append(title, el('p', 'hint', `${group.member_count} 位成员 · 已开放 ${group.permissions.length} 项权限`));
     summary.append(heading); card.append(summary);
     const form = el('form', 'permission-group-form');
     const label = el('label', '', '权限组名称');
     const name = el('input'); name.value = group.name; name.maxLength = 64; name.required = true;
     name.readOnly = group.default; name.setAttribute('aria-label', '权限组名称'); label.append(name);
-    const hint = el('p', 'hint', group.default ? '所有新账号默认加入会员组。修改访问范围会对组内所有成员生效。' : '组内成员共享以下访问范围。展开成员端或管理端，选择可访问的侧栏页面。');
+    const hint = el('p', 'hint', group.default ? '所有新账号默认加入会员组。修改访问范围会对组内所有成员生效。' : '组内成员共享以下访问范围。展开成员端或管理端，选择可访问的页面及可使用的操作。');
     const tree = buildPermissionTree(permissionTree, group.permissions);
     const status = el('p', 'permission-group-status'); status.setAttribute('role', 'status');
     const actions = el('div', 'actions');
@@ -53,7 +53,7 @@ function renderPermissionGroups() {
           {name: name.value.trim(), permissions: readPermissionTree(tree)});
         group.name = saved.name; group.permissions = saved.permissions;
         title.querySelector('h2').textContent = saved.name;
-        heading.querySelector('p').textContent = `${group.member_count} 位成员 · 已开放 ${saved.permissions.length} 个页面`;
+        heading.querySelector('p').textContent = `${group.member_count} 位成员 · 已开放 ${saved.permissions.length} 项权限`;
         status.textContent = '已保存，组内所有成员的访问范围已更新。';
         await refreshAdminPermissions();
       } catch (error) { status.textContent = error.message; dirty(); }

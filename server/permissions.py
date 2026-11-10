@@ -6,30 +6,32 @@ import uuid
 from server import db, root_admin
 
 PERMISSIONS = {
-    'duty': ('当前排班', '查看本人排班并签到'),
+    'duty': ('打卡', '在概览中完成到岗签到'),
     'schedule_list': ('排班列表', '查看所有人员的已生成排班，不含考勤信息'),
-    'member_field': ('外勤管理', '登记本人的外勤'),
+    'member_field': ('外勤', '在概览中登记本人的外勤'),
     'field_confirm': ('外勤确认', '确认或退回待确认的外勤'),
     'overview': ('概览', '出勤统计与排班详情'),
     'attendance_edit': ('更改考勤状态', '在概览中把某人的考勤改判为准时、迟到或旷班'),
     'weekly': ('每周排班', '维护模板、生成和清除排班'),
     'special': ('特殊排班', '新增和管理临时班次'),
     'swap': ('调换值班', '创建和管理调班'),
-    'permission_groups': ('权限管理', '创建和管理权限组的访问范围'),
+    'permission_groups': ('权限组管理', '创建和管理权限组的访问范围'),
     'members': ('用户管理', '管理账号、密码与所属权限组'),
+    'checkin_manage': ('打卡设置', '设置打卡和外勤的 IP 允许或排除规则'),
     'field': ('外勤管理', '查看和管理成员的外勤记录'),
     # `settings` is kept as the sidebar selector but is not a grantable leaf: the page
-    # opens when the account holds `rules` or `clock`.
-    'settings': ('其他设置', '值班规则、系统时间与发件邮箱'),
+    # opens when the account holds any of its settings permissions.
+    'settings': ('其他设置', '值班规则、打卡网络、SSO、系统时间与发件邮箱'),
     'rules': ('值班时间', '签到窗口与迟到/旷班阈值'),
     'clock': ('系统时间', '自动/手动系统时钟'),
     'smtp': ('SMTP', '配置发件邮箱服务器'),
+    'sso': ('SSO 设置', '配置 GDUTNIC 单点登录与账号绑定'),
     'push': ('消息推送', '设置收件邮箱、推送周期和考勤邮件格式'),
     'logs': ('查看日志', '查看账号操作记录'),
     'data': ('数据管理', '查看和管理数据表'),
 }
 # Page selectors that are derived from child leaves rather than granted directly.
-DERIVED = {'settings': ('rules', 'clock', 'smtp')}
+DERIVED = {'settings': ('rules', 'clock', 'smtp', 'checkin_manage', 'sso')}
 GRANTABLE = tuple(key for key in PERMISSIONS if key not in DERIVED)
 ALL_PERMISSIONS = tuple(PERMISSIONS)
 DEFAULT_PERMISSIONS = ('duty', 'member_field', 'field_confirm')
@@ -39,8 +41,11 @@ MEMBER_PERMISSIONS = ('duty', 'schedule_list', 'member_field', 'field_confirm')
 ADMIN_PERMISSIONS = frozenset(PERMISSIONS) - set(MEMBER_PERMISSIONS)
 TREE = [
     {'id': 'member_area', 'label': '成员端', 'hint': '成员页面的侧栏入口', 'children': [
-        {'id': key, 'label': PERMISSIONS[key][0], 'hint': PERMISSIONS[key][1]}
-        for key in MEMBER_PERMISSIONS]},
+        {'id': 'member_overview_group', 'label': '概览', 'hint': '概览始终展示；分别控制打卡和外勤操作', 'children': [
+            {'id': key, 'label': PERMISSIONS[key][0], 'hint': PERMISSIONS[key][1]}
+            for key in ('duty', 'member_field')]},
+        *[{'id': key, 'label': PERMISSIONS[key][0], 'hint': PERMISSIONS[key][1]}
+          for key in ('schedule_list', 'field_confirm')]]},
     {'id': 'admin_area', 'label': '管理端', 'hint': '管理页面的侧栏入口', 'children': [
         {'id': 'overview_group', 'label': PERMISSIONS['overview'][0], 'hint': '出勤统计与排班详情', 'children': [
             {'id': 'overview', 'label': '查看概览', 'hint': PERMISSIONS['overview'][1]},
@@ -51,20 +56,22 @@ TREE = [
         {'id': 'special', 'label': PERMISSIONS['special'][0], 'hint': PERMISSIONS['special'][1]},
         {'id': 'swap', 'label': PERMISSIONS['swap'][0], 'hint': PERMISSIONS['swap'][1]},
         {'id': 'field', 'label': PERMISSIONS['field'][0], 'hint': PERMISSIONS['field'][1]},
-        {'id': 'push', 'label': PERMISSIONS['push'][0], 'hint': PERMISSIONS['push'][1]},
         {'id': 'members', 'label': PERMISSIONS['members'][0], 'hint': PERMISSIONS['members'][1]},
         {'id': 'permission_groups', 'label': PERMISSIONS['permission_groups'][0],
          'hint': PERMISSIONS['permission_groups'][1]},
+        {'id': 'push', 'label': PERMISSIONS['push'][0], 'hint': PERMISSIONS['push'][1]},
         {'id': 'logs', 'label': PERMISSIONS['logs'][0], 'hint': PERMISSIONS['logs'][1]},
         {'id': 'data', 'label': PERMISSIONS['data'][0], 'hint': PERMISSIONS['data'][1]},
-        {'id': 'settings_group', 'label': PERMISSIONS['settings'][0], 'hint': '值班规则、系统时间与发件邮箱', 'children': [
+        {'id': 'settings_group', 'label': PERMISSIONS['settings'][0], 'hint': '值班规则、打卡网络、SSO、系统时间与发件邮箱', 'children': [
             {'id': 'rules', 'label': PERMISSIONS['rules'][0], 'hint': PERMISSIONS['rules'][1]},
             {'id': 'clock', 'label': PERMISSIONS['clock'][0], 'hint': PERMISSIONS['clock'][1]},
             {'id': 'smtp', 'label': PERMISSIONS['smtp'][0], 'hint': PERMISSIONS['smtp'][1]},
+            {'id': 'checkin_manage', 'label': PERMISSIONS['checkin_manage'][0], 'hint': PERMISSIONS['checkin_manage'][1]},
+            {'id': 'sso', 'label': PERMISSIONS['sso'][0], 'hint': PERMISSIONS['sso'][1]},
         ]},
     ]},
 ]
-GROUP_IDS = ('member_area', 'admin_area', 'overview_group', 'settings_group')
+GROUP_IDS = ('member_area', 'member_overview_group', 'admin_area', 'overview_group', 'settings_group')
 # Only used to upgrade stored permissions and console recovery calls from older builds.
 LEGACY = {
     'user': DEFAULT_PERMISSIONS,
@@ -87,7 +94,7 @@ def leaves(nodes=None):
 def _clean(values):
     if not isinstance(values, (list, tuple, set)):
         return set()
-    # `settings` cannot be stored: holding rules or clock is what opens the page.
+    # `settings` is a derived selector; only its individual permissions are stored.
     return {v for v in values if isinstance(v, str) and v in PERMISSIONS and v not in DERIVED}
 
 

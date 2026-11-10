@@ -116,6 +116,7 @@ def _publish_range(start_day, end_day):
                     (day, index)).fetchone()
                 # A shift already generated for this slot is replaced, unless someone has
                 # checked in: attendance must never be silently thrown away.
+                replace_ids = set()
                 if existing:
                     checked = conn.execute(
                         'SELECT 1 FROM attendance WHERE shift_id=? AND checked_at IS NOT NULL',
@@ -123,7 +124,7 @@ def _publish_range(start_day, end_day):
                     if checked:
                         skipped += 1
                         continue
-                    conn.execute('DELETE FROM shifts WHERE id=?', (existing['shift_id'],))
+                    replace_ids.add(existing['shift_id'])
                 # Conflicts with other shifts are replaced too, when they hold no attendance.
                 neighbors = conn.execute('SELECT * FROM shifts WHERE day>=? AND day<=?',
                     ((date.fromisoformat(day)-timedelta(days=1)).isoformat(),
@@ -139,10 +140,12 @@ def _publish_range(start_day, end_day):
                     if checked:
                         conflict = True
                         break
-                    conn.execute('DELETE FROM shifts WHERE id=?', (other['id'],))
+                    replace_ids.add(other['id'])
                 if conflict:
                     skipped += 1
                     continue
+                # A skipped slot must leave all existing shifts untouched.
+                conn.executemany('DELETE FROM shifts WHERE id=?', [(sid,) for sid in sorted(replace_ids)])
                 sid = conn.execute('INSERT INTO shifts(day,start,end,location,note) VALUES(?,?,?,?,?)',
                                    (day, slot['start'], slot['end'], roster['location'], slot['label'])).lastrowid
                 conn.executemany('INSERT INTO attendance(shift_id,name) VALUES(?,?)',
