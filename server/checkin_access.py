@@ -37,7 +37,13 @@ def load():
         saved = db.get_setting(conn, KEY)
     if saved is None:
         return {kind: {'mode': 'exclude', 'entries': ''} for kind in KINDS}
-    return normalize(saved)
+    try:
+        return normalize(saved)
+    except (ValueError, TypeError):
+        # A hand-edited or half-written row must not take the member pages down: every
+        # check-in and field call reads this setting. Fail open to "no restriction" and
+        # let the administrator re-save the card to repair the stored value.
+        return {kind: {'mode': 'exclude', 'entries': ''} for kind in KINDS}
 
 
 def save(body):

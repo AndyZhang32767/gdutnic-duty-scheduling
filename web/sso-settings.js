@@ -42,8 +42,10 @@
   window.loadSsoSettings = async () => {
     field('ssoFields').disabled = true;
     field('ssoConfigStatus').textContent = '正在读取 SSO 配置…';
-    try { paint(await api('/api/admin/sso')); field('ssoConfigStatus').textContent = ''; field('ssoFields').disabled = false; }
+    try { paint(await api('/api/admin/sso')); field('ssoConfigStatus').textContent = ''; }
     catch (error) { field('ssoConfigStatus').textContent = error.message; }
+    // Re-enable even after a failed read, so the operator can retry or save.
+    finally { field('ssoFields').disabled = false; }
   };
   field('ssoClientType').addEventListener('change', updateFields);
   field('ssoClaimSelect').addEventListener('change', updateFields);

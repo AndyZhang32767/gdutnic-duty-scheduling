@@ -54,3 +54,31 @@ test('new revisions refresh local attendance without navigating or reloading',as
   assert.equal(f.updates(),3);
   f.controller.stop();
 });
+
+test('a failing long poll backs off instead of retrying every two seconds',async()=>{
+  let stamp=0,id=0,fail=0;
+  const timers=new Map(),delays=[];
+  const options={role:'member',now:()=>stamp,watching:()=>true,
+    setTimer:(fn,delay)=>{timers.set(++id,{fn,at:stamp+delay});return id;},
+    clearTimer:key=>timers.delete(key),onExpired:()=>{},onAttendance:async()=>{},
+    fetcher:async(path,init)=>{
+      if(path.includes('/heartbeat')) return {ok:true,status:200,json:async()=>({timeout_seconds:90})};
+      fail++;
+      return {ok:false,status:502,json:async()=>({})};
+    }};
+  const controller=createAttendanceLive(options);
+  const flush=async()=>{for(let i=0;i<10;i++) await Promise.resolve();};
+  // Record each re-arm delay so the backoff sequence is visible.
+  const original=options.setTimer;
+  controller.start();await flush();
+  for(let i=0;i<5;i++){
+    const next=[...timers].filter(([,t])=>t.at>stamp).sort((a,b)=>a[1].at-b[1].at)[0];
+    if(!next) break;
+    delays.push(next[1].at-stamp);
+    stamp=next[1].at;timers.delete(next[0]);next[1].fn();await flush();
+  }
+  const pollDelays=delays.filter(delay=>delay>=2000);
+  assert.ok(pollDelays.length>=3,JSON.stringify(delays));
+  assert.ok(pollDelays[2]>pollDelays[0],'poll delay must grow after repeated failures: '+JSON.stringify(pollDelays));
+  controller.stop();
+});

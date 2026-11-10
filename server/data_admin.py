@@ -328,14 +328,38 @@ def _reject_root(name, keys):
 
 
 def _privileged(keys, actor=''):
-    """True when this row is a privileged account the actor may not touch from here."""
+    """True when this row is a privileged account the actor may not touch from here.
+
+    The check must not go through `permissions.is_admin`: that returns False for a
+    disabled account, which would let a data-only operator re-enable a disabled
+    administrator (or delete the row outright) without the account permission.
+    """
     from server import permissions
     target = str((keys or {}).get('username') or '')
     if not target or target == (actor or ''):
         return False
     if permissions.has(actor, 'members'):
         return False
-    return permissions.is_admin(target)
+    return _account_is_admin(target)
+
+
+def _account_is_admin(name):
+    """Whether the stored row is (or was) an administrator, ignoring `active`."""
+    from server import permissions, root_admin
+    if root_admin.is_root(name):
+        return True
+    with db.read() as conn:
+        row = conn.execute('SELECT group_id,permissions AS legacy FROM member_accounts WHERE username=?',
+                           (name,)).fetchone()
+        if not row:
+            return False
+        if row['group_id']:
+            group = conn.execute('SELECT permissions FROM permission_groups WHERE id=?',
+                                 (row['group_id'],)).fetchone()
+            held = permissions.decode(group['permissions']) if group else set()
+        else:
+            held = permissions.decode(row['legacy']) if row['legacy'] else set(permissions.DEFAULT_PERMISSIONS)
+    return bool(set(held) & permissions.ADMIN_PERMISSIONS)
 
 
 def _reject_privileged(name, keys, actor=''):

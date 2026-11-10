@@ -18,9 +18,12 @@
     try {
       paint(await api('/api/admin/checkin-access'));
       $('checkinAccessStatus').textContent = '';
-      controls.forEach(control => control.disabled = false);
     } catch (err) { $('checkinAccessStatus').textContent = err.message; }
-    finally { loading = false; }
+    finally {
+      // Re-enable even after a failed read, so the operator can retry or save.
+      controls.forEach(control => control.disabled = false);
+      loading = false;
+    }
   };
   form.onsubmit = async event => {
     event.preventDefault();

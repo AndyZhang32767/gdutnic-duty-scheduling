@@ -27,10 +27,16 @@ function createAttendanceLive(options) {
     } catch (_) { /* The watchdog keeps the deadline from the last response. */ }
     if (active && token === generation) heartbeatTimer = setTimer(() => heartbeat(token), 20000);
   }
+  let retryDelay = 2000;
   async function poll(token) {
     if (!active || token !== generation) return;
-    let retry = 2000;
+    // A timed-out long poll comes back with no revision change, so it re-arms at once
+    // (retry 0). Any other failure backs off, otherwise every open tab hammers a broken
+    // endpoint or a failing refresh every two seconds. A page that is simply not being
+    // watched issues no request, so it keeps the short interval and resumes instantly.
+    let retry = 2000, attempted = false, ok = false;
     if (watching()) {
+      attempted = true;
       controller = new AbortController();
       const requestController = controller;
       const timeout = setTimer(() => requestController.abort(), 25000);
@@ -50,6 +56,7 @@ function createAttendanceLive(options) {
             }
           }
           retry = 0;
+          ok = true;
         }
       } catch (_) { /* Retry after temporary disconnection without reloading the page. */ }
       finally {
@@ -57,6 +64,8 @@ function createAttendanceLive(options) {
         if (controller === requestController) controller = null;
       }
     }
+    if (attempted) retryDelay = ok ? 2000 : Math.min(retryDelay * 2, 30000);
+    if (retry && attempted && !ok) retry = retryDelay;
     if (active && token === generation) pollTimer = setTimer(() => poll(token), retry);
   }
   function start() {

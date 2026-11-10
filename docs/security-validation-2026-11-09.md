@@ -165,3 +165,49 @@ git diff --check
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -t tests
 node --test tests/'*.cjs'
 ```
+
+## 2026-11-10 复核第二批：数据控制台盲区、坏数据回退与前端重试
+
+上一轮修复后的独立复核又发现 5 个问题，均已修复。复核脚本的自动校验阶段因脚本缺陷没有执行，以下结论均为逐条人工核对源码与实测。
+
+### 高：已修复
+
+#### SEC-13：仅持数据权限可重新启用或删除已停用的管理员
+
+- 规则：FASTAPI-AUTHZ-001，对象状态授权。
+- 位置：`server/data_admin.py` 的 `_privileged`。
+- 证据：SEC-11 的守卫调用 `permissions.is_admin`，而该函数对停用账号返回空权限集。管理员被「用户管理」停用后，仅持数据权限的账号即可把 `active` 改回 1 或直接删除该行，绕过 SEC-11。
+- 修复：守卫改为直接读取存储的权限组，忽略 `active`；原始管理员同样视为受保护。
+- 验证：`test_data_console_cannot_touch_a_disabled_administrator_either`。
+
+### 中：已修复
+
+#### SEC-14：打卡规则数据损坏会让成员端接口全部 500
+
+- 规则：可用性 / 失败模式。
+- 位置：`server/checkin_access.py` 的 `load`。
+- 证据：`load` 直接 `normalize` 存储值，任何非预期结构都抛 `ValueError`。`/api/network-access`、`/api/member/status`、`/api/member/schedules`、`/api/member/field-duty` 都读取它，于是一行坏数据会让所有成员无法签到、前端按钮永久置灰。
+- 修复：解析失败时回退为「不限制」，并在管理端重新保存即可修复；不再向下抛出。
+- 验证：`test_corrupt_checkin_rules_do_not_break_member_pages`。
+
+#### SEC-15：设置卡片读取失败后控件永久禁用
+
+- 规则：可用性。
+- 位置：`web/checkin-access.js`、`web/sso-settings.js`。
+- 证据：启用控件后只在成功分支重新启用，请求失败时表单保持 disabled，除切换标签或刷新外无法恢复，管理员也就无法重新保存来修复 SEC-14 的坏数据。
+- 修复：在 `finally` 中恢复控件。
+- 验证：随 SEC-14 的接口用例人工复核。
+
+#### SEC-16：考勤长轮询失败后固定 2 秒重试
+
+- 规则：可用性 / 自伤型压力。
+- 位置：`web/attendance-live.js` 的 `poll`。
+- 证据：除 401 外的任何失败都按 2 秒重试，且 `onAttendance` 抛错同样如此。接口异常时每个打开的标签页都会持续高频请求；后端 502 时问题被放大。
+- 修复：真正发出请求且失败时按 2→30 秒指数退避，成功后复位；未在看的页面不发请求，保持原有短间隔以便切回即恢复。
+- 验证：`tests/test_attendance_live.cjs` 的「a failing long poll backs off…」。
+
+## 第二批复核后未修改的项
+
+- **`/api/chat/title` 没有登录校验**：属于未启用的旧版 Wiki 助手（`web/app.js` 不在任何页面加载，`/api/chat` 本身要登录），且该路由在基准快照中即如此。真正启用该界面时应统一走 `_require_mcp_user`；本轮不扩大改动范围。
+- **`/api/defaults` 向未登录访客返回管理员配置的 MCP 地址**：同上，属于未启用功能，且本轮已改为只读取管理员配置、不再接受会话中的旧地址。按现有部署不构成对外暴露。
+- **`activity_at` 由客户端提供**：这是设计取舍——浏览器只能报告「用户确实操作过」的时刻，服务端校验格式、有限窗口（60 秒内）且不允许回退，另有无响应当心跳兜底。无论是否可被脚本伪造，都无法让账号获得超出既有权限的能力，因此保留。

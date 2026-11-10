@@ -242,6 +242,32 @@ class SecurityBoundariesTest(PermissionFixture):
                          for _ in range(52)]
         self.assertEqual(codes, [401] * 50 + [429] * 2)
 
+    def test_data_console_cannot_touch_a_disabled_administrator_either(self):
+        """`is_admin` is False for a disabled account, so the guard must read the stored row."""
+        permissions.set_permissions('alice', ['data'])
+        permissions.set_permissions('bob', ['overview'])
+        member_store.update('bob', active=False)
+        client = self.login(admin=True)
+        response = client.put('/api/admin/data/tables/member_accounts',
+                              json={'keys': {'username': 'bob'}, 'values': {'active': 1}})
+        self.assertEqual(response.status_code, 400)
+        with db.read() as conn:
+            self.assertEqual(conn.execute("SELECT active FROM member_accounts WHERE username='bob'").fetchone()['active'], 0)
+        self.assertEqual(client.request('DELETE', '/api/admin/data/tables/member_accounts',
+                                        json={'keys': {'username': 'bob'}}).status_code, 400)
+        with db.read() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM member_accounts WHERE username='bob'").fetchone())
+
+    def test_corrupt_checkin_rules_do_not_break_member_pages(self):
+        client = self.login()
+        with db.write() as conn:
+            db.set_setting(conn, 'checkin_access', {'checkin': 'not-a-dict'})
+        for path in ('/api/network-access', '/api/member/status', '/api/member/field-duty'):
+            self.assertEqual(client.get(path).status_code, 200, path)
+        self.assertEqual(client.get('/api/member/schedules', params={'day': '2026-11-02'}).status_code, 200)
+        # The failure falls back to "no restriction" rather than blocking every check-in.
+        self.assertTrue(client.get('/api/network-access').json()['checkin'])
+
     def test_roster_validates_untrusted_json_before_creating_accounts(self):
         permissions.set_permissions('alice', ['weekly'])
         client = self.login(admin=True)
