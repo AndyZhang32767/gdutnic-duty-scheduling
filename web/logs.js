@@ -42,7 +42,13 @@ async function loadLogs() {
       select.append(option);
     }
     select.value = current;
-    $('logsStatus').textContent = `共 ${data.items.length} 条记录${query ? `，匹配“${query}”` : ''}。`;
+    const mb = bytes => (bytes / 1024 / 1024).toFixed(2);
+    const stats = data.stats;
+    const usage = stats
+      ? ` 存储 ${mb(stats.used_bytes)} MB / 上限 ${mb(stats.limit_bytes)} MB（共 ${stats.rows} 条；`
+        + `超过上限后自动删除最旧记录至 ${mb(stats.keep_bytes)} MB）。`
+      : '';
+    $('logsStatus').textContent = `共 ${data.items.length} 条记录${query ? `，匹配“${query}”` : ''}。${usage}`;
   } catch (err) {
     $('logsStatus').textContent = err.message;
   }

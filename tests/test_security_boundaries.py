@@ -268,6 +268,42 @@ class SecurityBoundariesTest(PermissionFixture):
         # The failure falls back to "no restriction" rather than blocking every check-in.
         self.assertTrue(client.get('/api/network-access').json()['checkin'])
 
+    def test_logs_page_reports_the_storage_cap(self):
+        permissions.set_permissions('alice', ['logs'])
+        client = self.login(admin=True)
+        from server import operation_log
+        operation_log.record('alice', '登录管理端')
+        body = client.get('/api/admin/logs').json()
+        self.assertEqual(body['stats']['limit_bytes'], 10 * 1024 * 1024)
+        self.assertEqual(body['stats']['keep_bytes'], 5 * 1024 * 1024)
+        self.assertGreater(body['stats']['used_bytes'], 0)
+        self.assertGreaterEqual(body['stats']['rows'], 1)
+
+    def test_first_setup_accepts_a_chosen_root_name(self):
+        from server import root_admin
+        # Start from a genuinely unregistered site: the fixture marks setup as done.
+        with db.write() as conn:
+            conn.execute("DELETE FROM settings WHERE `key`='setup_done'")
+            conn.execute('DELETE FROM users')
+        client = TestClient(api.app)
+        client.get('/' + admin_store.path())
+        response = client.post('/api/admin/register',
+                               json={'username': '协会负责人', 'password': 'first-password-123'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['username'], '协会负责人')
+        self.assertEqual(root_admin.username(), '协会负责人')
+        self.assertTrue(root_admin.verify('first-password-123'))
+        # The chosen name is what the root account logs in with from then on.
+        fresh = TestClient(api.app)
+        fresh.get('/' + admin_store.path())
+        self.assertEqual(fresh.post('/api/admin/login',
+                                    json={'username': '协会负责人',
+                                          'password': 'first-password-123'}).status_code, 200)
+        # A second registration is still refused.
+        self.assertEqual(client.post('/api/admin/register',
+                                     json={'username': 'someone-else',
+                                           'password': 'another-password'}).status_code, 409)
+
     def test_roster_validates_untrusted_json_before_creating_accounts(self):
         permissions.set_permissions('alice', ['weekly'])
         client = self.login(admin=True)
