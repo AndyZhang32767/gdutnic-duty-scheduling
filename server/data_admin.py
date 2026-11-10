@@ -65,11 +65,14 @@ TABLES = {
     'operation_log': {
         'label': '操作日志', 'pk': ['id'],
         'editable': [],  # the audit trail is append-only
+        'deletable': False,  # and never removable, not even with the data permission
         'search': ['actor', 'action', 'detail'],
         'masked': [],
     },
     'settings': {
         'label': '站点设置', 'pk': ['key'],
+        # Writing a settings row is restricted further in update_row: only the keys that
+        # the data console is allowed to expose there can ever change.
         'editable': ['value'],
         'search': ['key'],
         'masked': [],  # masked per row below, since only some keys are secret
@@ -113,6 +116,11 @@ TABLES = {
 }
 # Settings keys whose values are credentials, not readable configuration.
 SECRET_SETTING_PARTS = ('mcp', 'qq', 'oauth', 'password', 'secret', 'key', 'model', 'smtp', 'sso', 'keycloak')
+# Settings rows this console may write. Everything else (the bootstrap flag, the admin
+# path, the signing secret, rules, clocks, sessions, SSO) is only reachable through its
+# own screen, which also checks the matching permission. Without this list the data
+# permission alone could rewrite, for example, setup_done and re-open registration.
+WRITABLE_SETTINGS = frozenset({'chat_max_mb'})
 
 PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
@@ -230,7 +238,7 @@ def _filter(name, meta, present, q):
     return ((' WHERE ' + ' AND '.join(clauses)) if clauses else ''), params
 
 
-def preview(name, page=1, size=PAGE_SIZE, q=''):
+def preview(name, page=1, size=PAGE_SIZE, q='', actor=''):
     """One page of rows, with secrets masked and column metadata for the editor."""
     meta = _table(name)
     page = max(1, int(page or 1))
@@ -264,7 +272,8 @@ def preview(name, page=1, size=PAGE_SIZE, q=''):
     if meta.get('deletable', True):
         from server import root_admin
         for item in items:
-            if name == 'member_accounts' and root_admin.is_root(item.get('username')):
+            if name == 'member_accounts' and (root_admin.is_root(item.get('username'))
+                                              or _privileged({'username': item.get('username')}, actor)):
                 item['deletable'] = False
             else:
                 item['deletable'] = True
@@ -318,11 +327,35 @@ def _reject_root(name, keys):
         raise ValueError('原始管理员不在此表中管理')
 
 
+def _privileged(keys, actor=''):
+    """True when this row is a privileged account the actor may not touch from here."""
+    from server import permissions
+    target = str((keys or {}).get('username') or '')
+    if not target or target == (actor or ''):
+        return False
+    if permissions.has(actor, 'members'):
+        return False
+    return permissions.is_admin(target)
+
+
+def _reject_privileged(name, keys, actor=''):
+    """Privileged accounts are only manageable from 用户管理, which checks the grant permission.
+
+    The 数据管理 console is granted on its own; without this guard that permission alone
+    could disable or delete an administrator. Callers that already hold the account
+    management permission (`actor`) keep working through this console.
+    """
+    if name == 'member_accounts' and _privileged(keys, actor):
+        raise ValueError('管理员账号只能在用户管理中修改，或由拥有用户管理权限的账号操作')
+
+
 def update_row(name, keys, values, actor=''):
     """Update whitelisted columns of exactly one row."""
     meta = _table(name)
-    if name == 'settings' and _is_secret(name, (keys or {}).get('key'), None):
-        raise ValueError('含凭据的设置只能通过专用配置入口修改')
+    if name == 'settings':
+        setting_key = str((keys or {}).get('key') or '')
+        if setting_key not in WRITABLE_SETTINGS or _is_secret(name, setting_key, None):
+            raise ValueError('含凭据或影响站点登录的设置只能通过专用配置入口修改')
     if not meta['editable']:
         raise ValueError('这张表不支持在此修改')
     if not isinstance(values, dict) or not values:
@@ -335,6 +368,7 @@ def update_row(name, keys, values, actor=''):
             raise ValueError('不允许修改：' + '、'.join(rejected))
         clause, key_values = _key_clause(meta, present, keys or {})
         _reject_root(name, keys or {})
+        _reject_privileged(name, keys or {}, actor)
         assignments = ', '.join(f'{_quote(column)}=?' for column in allowed)
         coerced = [_coerce(conn, name, column, values[column]) for column in allowed]
         changed = conn.execute(
@@ -358,6 +392,7 @@ def delete_many(name, keys, actor=''):
         for entry in keys:
             try:
                 _reject_root(name, entry or {})
+                _reject_privileged(name, entry or {}, actor)
                 clause, key_values = _key_clause(meta, present, entry or {})
             except ValueError:
                 continue  # a malformed or protected row must not abort the batch
@@ -396,6 +431,7 @@ def delete_page(name, page=1, size=PAGE_SIZE, q='', actor=''):
             entry = {column: row[column] for column in meta['pk'] if column in present}
             try:
                 _reject_root(name, entry)
+                _reject_privileged(name, entry, actor)
                 clause, key_values = _key_clause(meta, present, entry)
             except ValueError:
                 continue
@@ -413,6 +449,7 @@ def delete_row(name, keys, actor=''):
         present = [column for column, _type in columns(conn, name)]
         clause, key_values = _key_clause(meta, present, keys or {})
         _reject_root(name, keys or {})
+        _reject_privileged(name, keys or {}, actor)
         if name == 'member_accounts' and actor and str(keys.get('username')) == actor:
             raise ValueError('不能在这里删除自己的账号')
         deleted = conn.execute(

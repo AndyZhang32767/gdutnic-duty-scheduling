@@ -10,6 +10,8 @@ from server import db
 
 ALPHABET = string.ascii_lowercase + string.digits
 ITERATIONS = 180_000
+# Echoed in place of a stored credential; save handlers treat it as "keep the stored value".
+MASKED = "••••••"
 
 # Who may act as administrator is checked on every authenticated request. Caching the
 # result avoids re-reading the whole settings table per request; every write below
@@ -272,9 +274,18 @@ def save_model(body: dict[str, Any]) -> dict[str, Any]:
     if "system_prompt" in body:
         model["system_prompt"] = str(body.get("system_prompt") or "")
     if isinstance(body.get("keys_by_provider"), dict):
-        model["keys_by_provider"] = {
-            str(k): str(v) for k, v in body["keys_by_provider"].items() if isinstance(v, str)
-        }
+        # A masked value means "keep what is stored"; the key is never echoed back.
+        current = model.get("keys_by_provider") if isinstance(model.get("keys_by_provider"), dict) else {}
+        updated = {}
+        for name, value in body["keys_by_provider"].items():
+            if not isinstance(value, str):
+                continue
+            if value and set(value) <= {"•"}:
+                if str(current.get(str(name)) or ""):
+                    updated[str(name)] = str(current[str(name)])
+            else:
+                updated[str(name)] = value
+        model["keys_by_provider"] = updated
     save(data)
     return model_public()
 
@@ -287,16 +298,22 @@ def system_prompt() -> str:
 
 
 def model_public() -> dict[str, Any]:
+    """Never returns the stored API keys, only whether one is set.
+
+    The whole 其他设置 page is reachable with any single settings card, so echoing a
+    plaintext key here would hand the LLM credential to whoever holds only, say, SMTP.
+    """
     model = model_config()
     key = model.get("openai_key") or ""
+    providers = model.get("keys_by_provider") or {}
     return {
         "provider": model.get("provider") or "openai",
         "openai_base": model.get("openai_base") or "",
         "openai_model": model.get("openai_model") or "",
-        "openai_key": key,
+        "openai_key": MASKED if key.strip() else "",
         "system_prompt": system_prompt(),
         "has_key": bool(key.strip()),
-        "keys_by_provider": model.get("keys_by_provider") or {},
+        "keys_by_provider": {name: MASKED for name, value in providers.items() if str(value or "").strip()},
     }
 
 
@@ -451,7 +468,8 @@ def qq_public() -> dict[str, Any]:
     secret = str(qq.get("app_secret") or "")
     return {
         "app_id": str(qq.get("app_id") or "").strip(),
-        "app_secret": secret,
+        # Masked for the same reason as the model key: the page is shared by five cards.
+        "app_secret": MASKED if secret.strip() else "",
         "has_secret": bool(secret.strip()),
         "enabled": bool(qq.get("enabled")),
         "oauth_connected": oauth_connected(),

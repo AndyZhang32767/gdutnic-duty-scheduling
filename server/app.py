@@ -40,7 +40,6 @@ def _session_secret() -> str:
     return secret
 
 
-@asynccontextmanager
 def _qq_bot():
     """Load the optional QQ bridge lazily: it pulls in asyncio helpers we otherwise skip."""
     from server import qq_bot
@@ -111,6 +110,10 @@ app.add_middleware(
 
 ADMIN_LIMITER = security.AttemptLimiter()
 ACCOUNT_LIMITER = security.AttemptLimiter()
+# Duty-account logins are throttled per source address as well; without it the login
+# form is an unthrottled password oracle for every member account.
+MEMBER_LIMITER = security.AttemptLimiter(max_attempts=security.MEMBER_MAX_ATTEMPTS,
+                                         window=security.MEMBER_WINDOW_SECONDS)
 
 
 @app.middleware("http")
@@ -598,7 +601,9 @@ def _require_permission(request: Request, permission: str) -> str:
     if not name:
         raise HTTPException(status_code=401, detail="请先登录管理员")
     # Legacy model/MCP settings routes retain their original authorization even
-    # though the settings sidebar now also contains SSO and network controls.
+    # though the settings sidebar now also contains SSO and network controls. The
+    # credentials they expose are masked on read, so opening the page with one card
+    # cannot reveal another card's secrets.
     allowed = (any(permissions.has(name, key) for key in ('rules', 'clock', 'smtp'))
                if permission == 'settings' else permissions.has(name, permission))
     if not allowed:
@@ -660,7 +665,9 @@ async def admin_status(request: Request) -> dict[str, Any]:
 async def admin_register(request: Request) -> dict[str, Any]:
     if not _admin_gate(request):
         raise HTTPException(status_code=403, detail="请从控制台提示的管理员网址进入")
-    if admin_store.has_user():
+    # The real guard is the root credential file, not the `setup_done` setting: that row
+    # also lives in the database and must never be able to reopen registration.
+    if root_admin.exists() or admin_store.has_user():
         raise HTTPException(status_code=409, detail="管理员已注册，请直接登录")
     body = await request.json()
     # The first account is the 原始管理员; its name is fixed and its credentials live in
@@ -967,7 +974,7 @@ async def admin_data_tables(request: Request):
 async def admin_data_preview(name: str, request: Request, page: int = 1, size: int = 50, q: str = ""):
     _require_permission(request, "data")
     try:
-        return data_admin.preview(name, page, size, q)
+        return data_admin.preview(name, page, size, q, _admin_username(request))
     except LookupError as exc:
         raise _schedule_error(exc) from exc
     except (TypeError, ValueError) as exc:
@@ -1314,13 +1321,18 @@ async def member_status(request: Request):
 
 @app.post("/api/member/login")
 async def member_login(request: Request):
+    key = "member:" + security.client_key(request)
+    if MEMBER_LIMITER.blocked(key):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
     body = await request.json()
     name = str(body.get("username") or "").strip()
     # The 原始管理员 is an administrator identity only; it must never open a duty session.
     version = None if root_admin.is_root(name) else member_store.authenticate(
         name, str(body.get("password") or ""))
     if not version:
+        MEMBER_LIMITER.fail(key)
         raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
+    MEMBER_LIMITER.reset(key)
     _log(name, '登录值班账号', role='member')
     request.session["member_username"] = name
     request.session["member_version"] = version

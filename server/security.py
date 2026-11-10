@@ -12,6 +12,11 @@ SESSION_TTL = 4 * 60 * 60
 MAX_ATTEMPTS = 8
 WINDOW_SECONDS = 10 * 60
 
+# Duty accounts sign in on shared club devices and mistype often, so their limit is
+# looser: 50 failures from one source address, then a 5-minute cooldown.
+MEMBER_MAX_ATTEMPTS = 50
+MEMBER_WINDOW_SECONDS = 5 * 60
+
 
 class AttemptLimiter:
     def __init__(self, max_attempts=MAX_ATTEMPTS, window=WINDOW_SECONDS):

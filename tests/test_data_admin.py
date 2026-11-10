@@ -84,14 +84,22 @@ class TestDataAdmin(test_schedule.ScheduleTest):
         with self.assertRaises(LookupError):
             data_admin.update_row('shifts', {'id': 9999}, {'note': 'x'})
 
-    def test_immutable_tables_refuse_edits_but_still_delete(self):
+    def test_audit_trail_refuses_edits_and_deletes(self):
         with db.write() as conn:
             conn.execute("INSERT INTO operation_log(at,actor,role,action,detail)"
                          " VALUES('2026-11-02T09:00:00+08:00','root','admin','测试','记录')")
         with self.assertRaises(ValueError):
             data_admin.update_row('operation_log', {'id': 1}, {'detail': '改'})
         rows = data_admin.preview('operation_log')['items']
-        assert data_admin.delete_row('operation_log', {'id': rows[0]['id']})['deleted'] == 1
+        # The data console cannot erase the evidence of its own use, even with `data`.
+        assert data_admin.TABLES['operation_log']['deletable'] is False
+        with self.assertRaises(ValueError):
+            data_admin.delete_row('operation_log', {'id': rows[0]['id']})
+        with self.assertRaises(ValueError):
+            data_admin.delete_many('operation_log', [{'id': rows[0]['id']}])
+        with self.assertRaises(ValueError):
+            data_admin.delete_page('operation_log')
+        assert data_admin.preview('operation_log')['total'] == 1
 
     def test_delete_removes_exactly_one_row(self):
         sid = schedule_store.save(dict(day='2026-11-02', start='09:00', end='10:00', members=['甲']))
@@ -225,10 +233,19 @@ class TestDataAdminProtection(test_schedule.ScheduleTest):
 
     def test_settings_values_remain_editable(self):
         with db.write() as conn:
-            conn.execute("INSERT INTO settings(key,value) VALUES('path','\"abc12345\"')")
-        data_admin.update_row('settings', {'key': 'path'}, {'value': '"zzz99999"'})
+            conn.execute("INSERT INTO settings(key,value) VALUES('chat_max_mb','32')")
+        data_admin.update_row('settings', {'key': 'chat_max_mb'}, {'value': '64'})
         rows = {row['key']: row['value'] for row in data_admin.preview('settings')['items']}
-        assert rows['path'] == '"zzz99999"'
+        assert rows['chat_max_mb'] == '64'
+
+    def test_login_affecting_settings_cannot_be_rewritten_here(self):
+        """The bootstrap flag is a database row; it must not re-open registration."""
+        with db.write() as conn:
+            conn.execute("INSERT INTO settings(key,value) VALUES('setup_done','\"alice\"')")
+            conn.execute("INSERT INTO settings(key,value) VALUES('path','\"abc12345\"')")
+        for key in ('setup_done', 'path', 'session_idle', 'duty_rules', 'system_clock'):
+            with self.assertRaises(ValueError, msg=key):
+                data_admin.update_row('settings', {'key': key}, {'value': '"x"'})
 
     def test_table_list_reports_deletability(self):
         tables = {item['name']: item for item in data_admin.list_tables()['items']}

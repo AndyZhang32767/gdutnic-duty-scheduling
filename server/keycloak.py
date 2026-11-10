@@ -287,8 +287,11 @@ async def callback(request: Request, code: str = '', state: str = '', error: str
                 raise HTTPException(403, '绑定账号已停用、被重建或没有此入口权限')
         elif cfg['claim']:
             match = profile.get(cfg['claim'], '').strip()
-            # The root account always requires local-password proof for its first link.
-            if match and not root_admin.is_root(match):
+            # Automatic matching may only ever pick up an ordinary member account.
+            # Privileged accounts (anything holding an administrative permission, and the
+            # root account) must prove the local password, otherwise whoever can edit the
+            # SSO settings could point the claim at an administrator name and take it over.
+            if match and not root_admin.is_root(match) and not permissions.is_admin(match):
                 candidate = conn.execute('SELECT username FROM member_accounts WHERE username=? AND active=1 AND sso_auto_link_blocked=0', (match,)).fetchone()
                 if candidate and eligible(match, flow['target']):
                     # Never silently replace an existing link.

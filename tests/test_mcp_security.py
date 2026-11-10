@@ -92,14 +92,19 @@ class McpSecurityTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 302)
             self.assertEqual(start.call_args.args[0], 'https://wiki.example/mcp')
 
-    async def test_member_login_is_not_throttled_by_admin_failures(self):
+    async def test_member_login_has_its_own_throttle_separate_from_admin_failures(self):
         limiter = security.AttemptLimiter()
         for _ in range(8):
             limiter.fail('admin:absent')
-        with patch.object(api, 'ACCOUNT_LIMITER', limiter), patch.object(api.member_store, 'authenticate', return_value=None), patch.object(api.root_admin, 'is_root', return_value=False):
-            for _ in range(12):
+        member_limiter = security.AttemptLimiter(max_attempts=2, window=60)
+        with patch.object(api, 'ACCOUNT_LIMITER', limiter), \
+                patch.object(api, 'MEMBER_LIMITER', member_limiter), \
+                patch.object(api.member_store, 'authenticate', return_value=None), patch.object(api.root_admin, 'is_root', return_value=False):
+            # Administrator failures in the account limiter do not block member logins.
+            for expected in (401, 401, 429, 429):
                 response = await self.client.post('/api/member/login', json={'username': 'absent', 'password': 'invalid'})
-                self.assertEqual(response.status_code, 401)
-            with patch.object(api.member_store, 'authenticate', return_value='version'), patch.object(api, '_log'):
+                self.assertEqual(response.status_code, expected)
+            with patch.object(api, 'MEMBER_LIMITER', security.AttemptLimiter()), \
+                    patch.object(api.member_store, 'authenticate', return_value='version'), patch.object(api, '_log'):
                 response = await self.client.post('/api/member/login', json={'username': 'absent', 'password': 'valid'})
                 self.assertEqual(response.status_code, 200)

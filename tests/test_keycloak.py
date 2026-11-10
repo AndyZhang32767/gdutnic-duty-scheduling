@@ -85,6 +85,30 @@ class KeycloakTest(PermissionFixture):
         self.assertEqual(response.headers['location'], '/')
         self.assertEqual(self.client.get('/api/member/status').json()['username'], 'alice')
 
+    def test_automatic_matching_never_links_a_privileged_account(self):
+        """Whoever edits the SSO settings could point the claim at an administrator name.
+
+        An administrator is only reachable through the password-verified binding page, so
+        the settings permission alone can never turn an SSO identity into an admin session.
+        """
+        member_store.create('ops', 'password123')
+        permissions.set_permissions('ops', ['overview'])
+        self.assertTrue(permissions.is_admin('ops'))
+        with patch.dict(os.environ, {'KEYCLOAK_USERNAME_CLAIM': 'preferred_username'}):
+            response = self.callback({'sub': 'attacker-sub', 'preferred_username': 'ops'})
+        self.assertEqual(response.headers['location'], '/auth/keycloak/bind')
+        self.assertFalse(self.client.get('/api/member/status').json()['logged_in'])
+        with db.read() as conn:
+            self.assertIsNone(conn.execute('SELECT username FROM keycloak_links').fetchone())
+
+    def test_automatic_matching_never_links_the_root_account(self):
+        root_admin.create_if_missing('root-password-123')
+        with patch.dict(os.environ, {'KEYCLOAK_USERNAME_CLAIM': 'preferred_username'}):
+            response = self.callback({'sub': 'root-sub', 'preferred_username': root_admin.username()})
+        self.assertEqual(response.headers['location'], '/auth/keycloak/bind')
+        with db.read() as conn:
+            self.assertIsNone(conn.execute('SELECT username FROM keycloak_links').fetchone())
+
     def test_missing_username_uses_manual_binding_without_losing_subject(self):
         response = self.callback({'sub': 'subject-with-no-name'})
         self.assertEqual(response.headers['location'], '/auth/keycloak/bind')

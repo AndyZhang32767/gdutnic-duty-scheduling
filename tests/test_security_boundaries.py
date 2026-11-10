@@ -163,6 +163,85 @@ class SecurityBoundariesTest(PermissionFixture):
         with db.read() as conn:
             self.assertEqual(db.get_setting(conn, 'smtp'), {'password': 'SMTP_TEST_SECRET'})
 
+    def test_data_console_cannot_reopen_registration(self):
+        """Clearing the bootstrap flag used to let /api/admin/register mint a root session."""
+        from server import root_admin
+        root_admin.create_if_missing('root-password-123')
+        permissions.set_permissions('alice', ['data'])
+        client = self.login(admin=True)
+        with db.write() as conn:
+            db.set_setting(conn, 'setup_done', root_admin.username())
+        response = client.put('/api/admin/data/tables/settings',
+                              json={'keys': {'key': 'setup_done'}, 'values': {'value': '""'}})
+        self.assertEqual(response.status_code, 400)
+        with db.read() as conn:
+            self.assertEqual(db.get_setting(conn, 'setup_done'), root_admin.username())
+        # Even with the flag gone the endpoint refuses once the root file exists.
+        with db.write() as conn:
+            conn.execute("DELETE FROM settings WHERE `key`='setup_done'")
+        gate = TestClient(api.app)
+        gate.get('/' + admin_store.path())
+        self.assertEqual(gate.post('/api/admin/register', json={'password': 'brand-new-pass'}).status_code, 409)
+
+    def test_data_console_cannot_disable_an_administrator(self):
+        permissions.set_permissions('alice', ['data'])
+        permissions.set_permissions('bob', ['overview'])
+        client = self.login(admin=True)
+        response = client.put('/api/admin/data/tables/member_accounts',
+                              json={'keys': {'username': 'bob'}, 'values': {'active': 0}})
+        self.assertEqual(response.status_code, 400)
+        with db.read() as conn:
+            self.assertEqual(conn.execute("SELECT active FROM member_accounts WHERE username='bob'").fetchone()['active'], 1)
+        self.assertEqual(client.request('DELETE', '/api/admin/data/tables/member_accounts',
+                                        json={'keys': {'username': 'bob'}}).status_code, 400)
+        page = client.get('/api/admin/data/tables/member_accounts').json()
+        self.assertFalse({row['username']: row for row in page['items']}['bob']['deletable'])
+
+    def test_data_console_cannot_erase_the_audit_trail(self):
+        permissions.set_permissions('alice', ['data'])
+        client = self.login(admin=True)
+        with db.write() as conn:
+            conn.execute("INSERT INTO operation_log(at,actor,role,action,detail)"
+                         " VALUES('2026-11-02T09:00:00+08:00','root','admin','测试','记录')")
+        row = client.get('/api/admin/data/tables/operation_log').json()['items'][0]
+        for method, path, body in [
+                ('DELETE', '/api/admin/data/tables/operation_log', {'keys': {'id': row['id']}}),
+                ('POST', '/api/admin/data/tables/operation_log/delete-many', {'keys': [{'id': row['id']}]}),
+                ('POST', '/api/admin/data/tables/operation_log/delete-page', {'page': 1})]:
+            self.assertEqual(client.request(method, path, json=body).status_code, 400, (method, path))
+        ids = [item['id'] for item in client.get('/api/admin/data/tables/operation_log').json()['items']]
+        self.assertIn(row['id'], ids)
+
+    def test_settings_cards_do_not_expose_other_cards_credentials(self):
+        with db.write() as conn:
+            db.set_setting(conn, 'model', {'openai_key': 'MODEL_TEST_SECRET',
+                                           'keys_by_provider': {'openai': 'PROVIDER_TEST_SECRET'}})
+            db.set_setting(conn, 'qq', {'app_secret': 'QQ_TEST_SECRET'})
+        permissions.set_permissions('alice', ['smtp'])
+        client = self.login(admin=True)
+        for path in ('/api/admin/model', '/api/admin/qq'):
+            response = client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            for secret in ('MODEL_TEST_SECRET', 'PROVIDER_TEST_SECRET', 'QQ_TEST_SECRET'):
+                self.assertNotIn(secret, response.text, (path, secret))
+        # Saving the masked echo back keeps the stored keys untouched.
+        self.assertEqual(client.post('/api/admin/model', json={'provider': 'openai'}).status_code, 200)
+        self.assertEqual(admin_store.model_config()['openai_key'], 'MODEL_TEST_SECRET')
+        self.assertEqual(admin_store.model_config()['keys_by_provider'], {'openai': 'PROVIDER_TEST_SECRET'})
+
+    def test_member_login_is_throttled_per_source(self):
+        self.login_client = TestClient(api.app)
+        limiter = security.AttemptLimiter(max_attempts=security.MEMBER_MAX_ATTEMPTS,
+                                          window=security.MEMBER_WINDOW_SECONDS)
+        self.assertEqual(security.MEMBER_MAX_ATTEMPTS, 50)
+        self.assertEqual(security.MEMBER_WINDOW_SECONDS, 5 * 60)
+        with patch.object(api, 'MEMBER_LIMITER', limiter):
+            with patch.object(api.member_store, 'authenticate', return_value=None):
+                codes = [self.login_client.post('/api/member/login',
+                                                json={'username': 'alice', 'password': 'wrong'}).status_code
+                         for _ in range(52)]
+        self.assertEqual(codes, [401] * 50 + [429] * 2)
+
     def test_roster_validates_untrusted_json_before_creating_accounts(self):
         permissions.set_permissions('alice', ['weekly'])
         client = self.login(admin=True)
