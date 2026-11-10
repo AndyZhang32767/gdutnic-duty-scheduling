@@ -344,7 +344,7 @@
             <section class="sso-config-card">
               <h3>身份认证服务</h3><p class="hint">填写 Keycloak 为本应用分配的地址和客户端信息。</p>
               <div class="sso-grid">
-                <div class="sso-wide"><label class="outlined-field"><input id="ssoIssuer" type="url" placeholder=" " maxlength="2048"><span>身份提供方地址（Issuer）</span></label><p class="hint">例如 https://sso.gdutnic.com/realms/nic，包含 Realm 名称。</p></div>
+                <div class="sso-wide"><label class="outlined-field"><input id="ssoIssuer" type="url" placeholder=" " maxlength="2048"><span>身份提供方地址（Issuer）</span></label><p class="hint">填写身份提供方的 Realm 地址，例如 https://你的域名/realms/你的Realm。</p></div>
                 <div><label class="outlined-field"><input id="ssoClientId" type="text" placeholder=" " autocomplete="off" maxlength="2048"><span>客户端标识（Client ID）</span></label></div>
                 <div><label for="ssoClientType">客户端类型</label><select id="ssoClientType"><option value="public">公开客户端 · 无需密钥</option><option value="confidential">机密客户端 · 使用密钥</option></select></div>
                 <div id="ssoSecretField" class="sso-wide" hidden><label class="outlined-field"><input id="ssoClientSecret" type="password" placeholder=" " autocomplete="new-password" maxlength="4096"><span>客户端密钥（Client Secret）</span></label><p id="ssoSecretHint" class="hint">填写 Keycloak 为此客户端生成的密钥。</p><label id="ssoClearSecretRow" class="review-check" hidden><input id="ssoClearSecret" type="checkbox"><span>清除已保存的密钥</span></label></div>

@@ -1,6 +1,8 @@
 # GDUTNIC Keycloak 登录配置
 
-## 已确认的公开信息
+> 本应用不自带任何身份提供方地址：`.env.example` 与后台输入框默认都是空的，先填写你自己部署的 Keycloak 地址才能启用 SSO。下文出现的地址只是本协会部署的示例。
+
+## 已确认的公开信息（本协会部署，仅供参考）
 
 2026-11-10 已读取 `https://sso.gdutnic.com/realms/nic/.well-known/openid-configuration`：
 
@@ -13,7 +15,6 @@
 ## Keycloak 端需要的设置
 
 在 `nic` Realm 创建专用 OpenID Connect Client（例如 `gdutnic-outline-assistant`）：
-
 1. 开启 Standard flow；使用 Authorization Code + PKCE S256。
 2. 可以使用 public Client；也支持开启 Client authentication 的 confidential Client，使用 `client_secret_post`。
 3. Valid redirect URIs 填写精确地址：`https://排班系统域名/api/auth/keycloak/callback`。不要使用通配符。
@@ -24,20 +25,20 @@
 
 原始管理员登录后，进入“其他设置 → SSO 设置”。其他管理员需先由权限组授予独立的“SSO 设置”权限。
 
-1. 填写身份提供方地址：`https://sso.gdutnic.com/realms/nic`。
+1. 填写身份提供方地址：`https://你的Keycloak域名/realms/你的Realm`
 2. 填写本应用的客户端标识，选择公开客户端或机密客户端；机密客户端需填写密钥。
 3. 填写精确的登录回调地址：`https://排班系统域名/api/auth/keycloak/callback`，并在 Keycloak 配置相同的有效重定向 URI。
 4. 首次接入将自动匹配字段保持为“不自动匹配”，实际登录后再确认字段。也支持自定义组织维护的字段。
 5. 可以先保存未启用的配置草稿；“测试服务连接”只验证服务发现，不保存配置或自动启用，也不能替代真实客户端登录。
 6. 打开“在登录页显示 SSO”，保存完整配置后立即生效，无需重启。关闭并保存后，两个登录页都隐藏 SSO 入口。
 
-SSO 默认关闭，未配置时不显示按钮。客户端密钥只保存在服务器数据库，不通过读取接口回显；编辑时留空保持原密钥，也可以明确清除。公开客户端不保存密钥。含凭据的 SSO 配置在数据控制台中脱敏且禁止直接改写。
+SSO 默认关闭，未配置时不显示按钮；身份提供方地址默认留空，必须自己填写。客户端密钥只保存在服务器数据库，不通过读取接口回显；编辑时留空保持原密钥，也可以明确清除。公开客户端不保存密钥。含凭据的 SSO 配置在数据控制台中脱敏且禁止直接改写。
 
 后台配置优先于环境配置。旧部署或自动化部署也可使用环境变量作为初始值，但必须明确设置 `KEYCLOAK_ENABLED=true` 才启用：
 
 ```dotenv
 KEYCLOAK_ENABLED=false
-KEYCLOAK_ISSUER=https://sso.gdutnic.com/realms/nic
+KEYCLOAK_ISSUER=
 KEYCLOAK_CLIENT_ID=
 KEYCLOAK_CLIENT_SECRET=
 KEYCLOAK_REDIRECT_URI=
