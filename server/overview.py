@@ -1,7 +1,9 @@
 """Monthly attendance statistics and weekly status for the admin overview."""
 from datetime import date, datetime, timedelta
 
-from server import db, duty_settings, schedule_store
+from pypinyin import lazy_pinyin
+
+from server import db, duty_settings, schedule_store, system_clock
 
 STATUS_LABELS = {'normal': '正常', 'late': '迟到', 'absent': '旷班', 'pending': '待签到'}
 # Statuses an administrator may set by hand from the overview card.
@@ -82,14 +84,44 @@ def _month_bounds(month):
     return first, following - timedelta(days=1)
 
 
-def overview(month=None, now=None):
-    now = now or datetime.now(schedule_store.TZ)
+def _week_start(day):
+    """Monday of the week containing `day`."""
+    return day - timedelta(days=day.weekday())
+
+
+def parse_week(week=None, now=None):
+    """Accepts a `YYYY-MM-DD` anchor anywhere in the week; defaults to the current one."""
+    now = system_clock.now() if now is None else now
+    if not week:
+        return _week_start(now.date())
+    return _week_start(date.fromisoformat(str(week)))
+
+
+def week_span(now=None):
+    """Earliest and latest week that hold a shift, always including the current week.
+
+    Arrows stop at these bounds, so a week with no shifts can still be stepped through
+    instead of stranding the user in the middle of a gap.
+    """
+    now = system_clock.now() if now is None else now
+    current = _week_start(now.date())
+    with db.read() as conn:
+        schedule_store.init(conn)
+        row = conn.execute('SELECT MIN(day) AS first, MAX(day) AS last FROM shifts').fetchone()
+    days = [date.fromisoformat(value) for value in
+            (row['first'] if row else None, row['last'] if row else None) if value]
+    earliest = min([*days, current])
+    latest = max([*days, current])
+    return {'first': _week_start(earliest).isoformat(), 'last': _week_start(latest).isoformat(),
+            'current': current.isoformat()}
+
+
+def overview(month=None, now=None, week=None):
+    now = system_clock.now() if now is None else now
     rules = duty_settings.load()
     first, last = _month_bounds(month or now.strftime('%Y-%m'))
-    week_start = now.date() - timedelta(days=now.weekday())
+    week_start = parse_week(week, now)
     week_end = week_start + timedelta(days=6)
-    range_start = min(first, week_start)
-    range_end = max(last, week_end)
 
     normal = late = absent = total = 0
     month_items = []
@@ -97,8 +129,12 @@ def overview(month=None, now=None):
     with db.read() as conn:
         schedule_store.init(conn)
         rows = conn.execute(
-            'SELECT * FROM shifts WHERE day>=? AND day<=? ORDER BY day,start,id',
-            (range_start.isoformat(), range_end.isoformat())).fetchall()
+            'SELECT s.*,w.slot AS weekly_slot FROM shifts s '
+            'LEFT JOIN weekly_instances w ON w.shift_id=s.id '
+            'WHERE (s.day>=? AND s.day<=?) OR (s.day>=? AND s.day<=?) '
+            'ORDER BY s.day,s.start,s.id',
+            (first.isoformat(), last.isoformat(),
+             week_start.isoformat(), week_end.isoformat())).fetchall()
         attendance = _attendance_by_shift(conn, rows)
         for row in rows:
             item = _shift_payload(conn, row, now, rules, attendance)
@@ -115,6 +151,26 @@ def overview(month=None, now=None):
                             late += 1
                         elif member['status'] == 'absent':
                             absent += 1
+        # Archived check-ins (schedules cleared) still count for the month.
+        live = {(m['name'], m['checked_at']) for item in month_items for m in item['members']
+                if m['checked_at']}
+        for row in conn.execute(
+                'SELECT day,start,end,name,checked_at FROM attendance_history'
+                ' WHERE day>=? AND day<=?', (first.isoformat(), last.isoformat())).fetchall():
+            if (row['name'], row['checked_at']) in live:
+                continue
+            shift = {'day': row['day'], 'start': row['start'], 'end': row['end']}
+            if schedule_store.shift_bounds(shift)[0] > now:
+                continue
+            total += 1
+            member = {'name': row['name'], 'checked_at': row['checked_at'], 'status_override': ''}
+            status = member_status(shift, member, now, rules)
+            if status == 'normal':
+                normal += 1
+            elif status == 'late':
+                late += 1
+            elif status == 'absent':
+                absent += 1
         timeline = []
         today = now.date().isoformat()
         previous = (now.date() - timedelta(days=1)).isoformat()
@@ -133,6 +189,7 @@ def overview(month=None, now=None):
             'weekday': current.weekday(),
             'shifts': _range_items(all_items, current),
         })
+    span = week_span(now=now)
     return {
         'month': first.strftime('%Y-%m'),
         'today': now.date().isoformat(),
@@ -145,8 +202,79 @@ def overview(month=None, now=None):
             'rate': round(normal / total * 100, 1) if total else None,
         },
         'timeline': timeline,
-        'week': {'start': week_start.isoformat(), 'end': week_end.isoformat(), 'days': days},
+        'week': {'start': week_start.isoformat(), 'end': week_end.isoformat(), 'days': days,
+                 'current': span['current'], 'first': span['first'], 'last': span['last'],
+                 # Navigation targets, so the client never has to parse dates.
+                 'previous': (week_start - timedelta(days=7)).isoformat()
+                 if week_start > date.fromisoformat(span['first']) else None,
+                 'next': (week_start + timedelta(days=7)).isoformat()
+                 if week_start < date.fromisoformat(span['last']) else None,
+                 # Totals for the delete confirmation; the client never counts rows itself.
+                 'shifts': sum(len(day['shifts']) for day in days),
+                 'people': sum(len(shift['members']) for day in days for shift in day['shifts']),
+                 'checked': sum(1 for day in days for shift in day['shifts']
+                                for member in shift['members'] if member['checked_at'])},
     }
+
+
+def pinyin_key(name):
+    """Sort key: full pinyin of the name, falling back to the raw text."""
+    return ''.join(lazy_pinyin(str(name or ''))).lower(), str(name or '')
+
+
+def anomaly_stats(weeks=2, now=None):
+    """Late/absent counts per person over the last `weeks` rolling weeks.
+
+    The window ends now and starts `weeks * 7` days back; when the data does not reach
+    that far, whatever falls inside the window is counted. Ranking breaks ties by name
+    pinyin, so equal counts read alphabetically.
+    """
+    weeks = 2 if int(weeks) == 2 else 4
+    now = system_clock.now() if now is None else now
+    rules = duty_settings.load()
+    start_day = (now.date() - timedelta(days=weeks * 7 - 1)).isoformat()
+    end_day = now.date().isoformat()
+    late = {}
+    absent = {}
+    with db.read() as conn:
+        schedule_store.init(conn)
+        rows = conn.execute(
+            'SELECT * FROM shifts WHERE day>=? AND day<=?', (start_day, end_day)).fetchall()
+        attendance = _attendance_by_shift(conn, rows)
+        seen = set()
+        for row in rows:
+            # Only finished (or at least started) duties can be judged.
+            if schedule_store.shift_bounds(row)[0] > now:
+                continue
+            for member in attendance.get(row['id'], []):
+                status = member_status(row, member, now, rules)
+                seen.add((row['day'], row['start'], member['name'], member['checked_at']))
+                if status == 'late':
+                    late[member['name']] = late.get(member['name'], 0) + 1
+                elif status == 'absent':
+                    absent[member['name']] = absent.get(member['name'], 0) + 1
+        # Archived check-ins from cleared schedules count too.
+        for row in conn.execute(
+                'SELECT day,start,end,name,checked_at FROM attendance_history'
+                ' WHERE day>=? AND day<=?', (start_day, end_day)).fetchall():
+            if (row['day'], row['start'], row['name'], row['checked_at']) in seen:
+                continue
+            shift = {'day': row['day'], 'start': row['start'], 'end': row['end']}
+            if schedule_store.shift_bounds(shift)[0] > now:
+                continue
+            status = member_status(shift, {'checked_at': row['checked_at']}, now, rules)
+            if status == 'late':
+                late[row['name']] = late.get(row['name'], 0) + 1
+            elif status == 'absent':
+                absent[row['name']] = absent.get(row['name'], 0) + 1
+
+    def ranking(counts):
+        items = [{'name': name, 'count': count} for name, count in counts.items() if count]
+        items.sort(key=lambda item: (-item['count'], pinyin_key(item['name'])))
+        return items
+
+    return {'weeks': weeks, 'start': start_day, 'end': end_day,
+            'late': ranking(late), 'absent': ranking(absent)}
 
 
 def _range_items(items, day):
@@ -165,3 +293,32 @@ def set_member_status(shift_id, name, status):
         conn.execute('UPDATE attendance SET status_override=? WHERE shift_id=? AND name=?',
                      (status, shift_id, name))
     return {'shift_id': shift_id, 'name': name, 'status': status}
+
+
+def member_schedule_week(week=None):
+    """Public roster details for signed-in members; never return attendance data."""
+    now = system_clock.now()
+    start = parse_week(week, now)
+    end = start + timedelta(days=6)
+    span = week_span(now)
+    with db.read() as conn:
+        rows = [dict(row) for row in conn.execute(
+            'SELECT s.id,s.day,s.start,s.end,s.location,s.note,s.special,w.slot AS weekly_slot '
+            'FROM shifts s LEFT JOIN weekly_instances w ON w.shift_id=s.id '
+            'WHERE s.day>=? AND s.day<=? ORDER BY s.day,s.start,s.id',
+            (start.isoformat(), end.isoformat()))]
+        names = {}
+        if rows:
+            ids = [row['id'] for row in rows]
+            placeholders = ','.join('?' for _ in ids)
+            for row in conn.execute(
+                    f'SELECT shift_id,name FROM attendance WHERE shift_id IN ({placeholders}) ORDER BY name', ids):
+                names.setdefault(row['shift_id'], []).append(row['name'])
+        for row in rows:
+            row['members'] = names.get(row['id'], [])
+    return {'start': start.isoformat(), 'end': end.isoformat(), 'current': span['current'],
+            'previous': (start - timedelta(days=7)).isoformat() if start.isoformat() > span['first'] else None,
+            'next': (start + timedelta(days=7)).isoformat() if start.isoformat() < span['last'] else None,
+            'days': [{'day': (start + timedelta(days=i)).isoformat(), 'weekday': i,
+                      'shifts': [row for row in rows if row['day'] == (start + timedelta(days=i)).isoformat()]}
+                     for i in range(7)]}

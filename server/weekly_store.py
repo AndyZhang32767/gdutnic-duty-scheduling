@@ -3,7 +3,7 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from server import db, schedule_store
+from server import db, schedule_store, system_clock
 
 KEY = 'weekly_roster'
 
@@ -78,11 +78,15 @@ def save(body):
     return roster
 
 
-def publish_until(end_date):
-    start = datetime.now(schedule_store.TZ).date()
+def publish_until(end_date, start_date=None):
+    """Generate from `start_date` (default today) through `end_date`, inclusive."""
+    today = system_clock.now_for(datetime).date()
+    start = date.fromisoformat(start_date) if start_date else today
     end = date.fromisoformat(end_date)
+    if start < today:
+        raise ValueError('开始日期不能早于今天')
     if end < start:
-        raise ValueError('生成到的日期不能早于今天')
+        raise ValueError('结束日期不能早于开始日期')
     return _publish_range(start, end)
 
 
@@ -106,18 +110,42 @@ def _publish_range(start_day, end_day):
             for index, slot in enumerate(roster['slots']):
                 if not slot['days'][weekday]:
                     continue
-                if conn.execute('SELECT 1 FROM weekly_instances WHERE day=? AND slot=?', (day, index)).fetchone():
-                    skipped += 1
-                    continue
-                # Leave dates with manual schedules intact, including their attendance records.
                 start, end = schedule_store.shift_bounds(dict(day=day, **slot))
+                existing = conn.execute(
+                    'SELECT shift_id FROM weekly_instances WHERE day=? AND slot=?',
+                    (day, index)).fetchone()
+                # A shift already generated for this slot is replaced, unless someone has
+                # checked in: attendance must never be silently thrown away.
+                replace_ids = set()
+                if existing:
+                    checked = conn.execute(
+                        'SELECT 1 FROM attendance WHERE shift_id=? AND checked_at IS NOT NULL',
+                        (existing['shift_id'],)).fetchone()
+                    if checked:
+                        skipped += 1
+                        continue
+                    replace_ids.add(existing['shift_id'])
+                # Conflicts with other shifts are replaced too, when they hold no attendance.
                 neighbors = conn.execute('SELECT * FROM shifts WHERE day>=? AND day<=?',
                     ((date.fromisoformat(day)-timedelta(days=1)).isoformat(),
                      (date.fromisoformat(day)+timedelta(days=1)).isoformat())).fetchall()
-                if any(start < schedule_store.shift_bounds(other)[1] and
-                       end > schedule_store.shift_bounds(other)[0] for other in neighbors):
+                conflict = False
+                for other in neighbors:
+                    if not (start < schedule_store.shift_bounds(other)[1] and
+                            end > schedule_store.shift_bounds(other)[0]):
+                        continue
+                    checked = conn.execute(
+                        'SELECT 1 FROM attendance WHERE shift_id=? AND checked_at IS NOT NULL',
+                        (other['id'],)).fetchone()
+                    if checked:
+                        conflict = True
+                        break
+                    replace_ids.add(other['id'])
+                if conflict:
                     skipped += 1
                     continue
+                # A skipped slot must leave all existing shifts untouched.
+                conn.executemany('DELETE FROM shifts WHERE id=?', [(sid,) for sid in sorted(replace_ids)])
                 sid = conn.execute('INSERT INTO shifts(day,start,end,location,note) VALUES(?,?,?,?,?)',
                                    (day, slot['start'], slot['end'], roster['location'], slot['label'])).lastrowid
                 conn.executemany('INSERT INTO attendance(shift_id,name) VALUES(?,?)',

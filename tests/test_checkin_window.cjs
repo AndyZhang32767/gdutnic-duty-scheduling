@@ -16,13 +16,13 @@ test('check-in stays closed before the early window', () => {
 
 test('check-in opens exactly when the early window starts', () => {
   assert.equal(canCheckIn(range, limits, at(-15)), true);
-  assert.equal(checkInLabel(range, limits, at(-15)), '确认到岗签到');
+  assert.equal(checkInLabel(range, limits, at(-15)), '确认签到');
 });
 
 test('label switches to late then absent as time passes', () => {
-  assert.equal(checkInLabel(range, limits, at(0)), '确认到岗签到');
-  assert.equal(checkInLabel(range, limits, at(10)), '确认到岗签到（迟到）');
-  assert.equal(checkInLabel(range, limits, at(30)), '确认到岗签到（已记为未到岗）');
+  assert.equal(checkInLabel(range, limits, at(0)), '确认签到');
+  assert.equal(checkInLabel(range, limits, at(10)), '确认签到（迟到）');
+  assert.equal(checkInLabel(range, limits, at(30)), '确认签到（已记为未到岗）');
 });
 
 test('check-in closes at the shift end', () => {

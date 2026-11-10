@@ -7,18 +7,27 @@ from urllib.parse import urlencode, urlparse
 import httpx
 
 from server.mcp_client import origin_from_mcp_url, normalize_mcp_url
-from server import db
+from server import db, admin_store
 
 SCOPES = "read"
 
 
 async def _wiki_request(method: str, url: str, **kwargs) -> httpx.Response:
+    # Metadata and restored OAuth flows must not choose a different origin.
+    configured = admin_store.mcp_url()
+    target = urlparse(url)
+    allowed = urlparse(origin_from_mcp_url(normalize_mcp_url(configured))) if configured else None
+    if (allowed is None or target.scheme not in {"http", "https"}
+            or target.username is not None or target.password is not None
+            or (target.scheme, target.hostname, target.port or (443 if target.scheme == "https" else 80))
+            != (allowed.scheme, allowed.hostname, allowed.port or (443 if allowed.scheme == "https" else 80))):
+        raise ValueError("OAuth 目标地址不在管理员配置的范围内")
     last: Exception | None = None
     for trust_env in (True, False):
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=15.0),
-                follow_redirects=True,
+                follow_redirects=False,
                 trust_env=trust_env,
             ) as client:
                 return await client.request(method, url, **kwargs)
@@ -81,7 +90,7 @@ async def exchange_code(
     if client_secret:
         data["client_secret"] = client_secret
     response = await _wiki_request("POST", token_endpoint, data=data, headers=headers, auth=auth)
-    if response.status_code >= 400:
+    if response.status_code >= 300:
         raise RuntimeError(f"OAuth token 交换失败: {response.text[:500]}")
     return response.json()
 
@@ -103,7 +112,7 @@ async def refresh_access_token(
     if client_secret:
         data["client_secret"] = client_secret
     response = await _wiki_request("POST", token_endpoint, data=data)
-    if response.status_code >= 400:
+    if response.status_code >= 300:
         raise RuntimeError(f"刷新 token 失败: {response.text[:500]}")
     return response.json()
 
@@ -133,7 +142,7 @@ async def _get_or_register_client(origin: str, meta: dict[str, Any], redirect_ur
         "scope": SCOPES,
     }
     response = await _wiki_request("POST", register_url, json=payload)
-    if response.status_code >= 400:
+    if response.status_code >= 300:
         raise RuntimeError(f"OAuth 客户端注册失败: {response.text[:500]}")
     created = response.json()
     rec = {

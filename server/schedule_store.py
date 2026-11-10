@@ -1,7 +1,7 @@
 """Persistent duty schedules and atomic, repeat-safe attendance."""
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from server import db
+from server import attendance_live, db, system_clock
 
 TZ = ZoneInfo('Asia/Shanghai')
 
@@ -30,7 +30,9 @@ def list_day(day, name=None):
             sql += ' AND EXISTS (SELECT 1 FROM attendance WHERE shift_id=shifts.id AND name=?)'
             args.append(name)
         rows = conn.execute(sql + ' ORDER BY day,start,id', args).fetchall()
-        grouped = _members_many(conn, [row['id'] for row in rows], name)
+        # Membership limits which shifts are visible; each visible shift still
+        # includes the whole team so cards and the timeline show coworkers.
+        grouped = _members_many(conn, [row['id'] for row in rows])
         for row in rows:
             item = dict(row)
             item['members'] = grouped.get(row['id'], [])
@@ -62,7 +64,7 @@ def _attach_status(items, name=None):
         return
     from server import duty_settings
     rules = duty_settings.load()
-    now = datetime.now(TZ)
+    now = system_clock.now()
     for item in items:
         start, end = shift_bounds(item)
         late_at = start + timedelta(minutes=rules['late_minutes'])
@@ -112,7 +114,7 @@ def validate_shift(body):
     return day, start, end, location, note, names
 
 
-def save(body, shift_id=None):
+def save(body, shift_id=None, *, expected_special=None):
     day, start, end, location, note, names = validate_shift(body)
     special = int(bool(body.get('special')))
     with db.write() as conn:
@@ -123,7 +125,7 @@ def save(body, shift_id=None):
                 (day, start, end, location, note, special)).lastrowid
         else:
             old = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
-            if not old:
+            if not old or (expected_special is not None and bool(old['special']) != expected_special):
                 raise LookupError('班次不存在')
             special = int(old['special'])
             checked = [r['name'] for r in conn.execute(
@@ -144,10 +146,13 @@ def save(body, shift_id=None):
     return shift_id
 
 
-def delete(shift_id):
+def delete(shift_id, *, expected_special=None):
     with db.write() as conn:
         init(conn)
-        if not conn.execute('DELETE FROM shifts WHERE id=?', (shift_id,)).rowcount:
+        # Include the resource type in the mutation itself to enforce the scope.
+        clause = 'id=?' if expected_special is None else 'id=? AND special=?'
+        params = (shift_id,) if expected_special is None else (shift_id, int(expected_special))
+        if not conn.execute(f'DELETE FROM shifts WHERE {clause}', params).rowcount:
             raise LookupError('班次不存在')
 
 
@@ -178,10 +183,99 @@ def _members(conn, shift_id, name=None):
     return [dict(r) for r in conn.execute(sql + ' ORDER BY name', args)]
 
 
+def _init_history(conn):
+    if isinstance(conn, db.MysqlConnection):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS attendance_history ("
+            " id BIGINT PRIMARY KEY AUTO_INCREMENT, day CHAR(10) NOT NULL,"
+            " start CHAR(5) NOT NULL, end CHAR(5) NOT NULL,"
+            " name VARCHAR(64) NOT NULL, checked_at VARCHAR(40) NOT NULL,"
+            " location VARCHAR(120) NOT NULL DEFAULT '', note TEXT NOT NULL,"
+            " archived_at VARCHAR(40) NOT NULL"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+    else:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS attendance_history ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL,"
+            " start TEXT NOT NULL, end TEXT NOT NULL, name TEXT NOT NULL,"
+            " checked_at TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',"
+            " note TEXT NOT NULL, archived_at TEXT NOT NULL)")
+
+
+def _archive_and_delete(conn, where='', args=()):
+    """Copy real check-ins matching `where` into attendance_history, then delete the shifts."""
+    _init_history(conn)
+    stamp = system_clock.now().isoformat(timespec='seconds')
+    checked = conn.execute(
+        'SELECT s.day,s.start,s.end,s.location,s.note,a.name,a.checked_at'
+        ' FROM shifts s JOIN attendance a ON a.shift_id=s.id'
+        ' WHERE a.checked_at IS NOT NULL' + (' AND ' + where if where else ''),
+        args).fetchall()
+    if checked:
+        conn.executemany(
+            'INSERT INTO attendance_history'
+            '(day,start,end,name,checked_at,location,note,archived_at) VALUES(?,?,?,?,?,?,?,?)',
+            [(r['day'], r['start'], r['end'], r['name'], r['checked_at'], r['location'],
+              r['note'] or '', stamp) for r in checked])
+    deleted = conn.execute('DELETE FROM shifts' + (' WHERE ' + where if where else ''),
+                           args).rowcount
+    return deleted, len(checked)
+
+
 def clear_all():
+    """Delete every schedule, archiving real check-ins so attendance history survives."""
     with db.write() as conn:
-        deleted = conn.execute('DELETE FROM shifts').rowcount
-    return {'deleted': deleted}
+        init(conn)
+        deleted, archived = _archive_and_delete(conn)
+    return {'deleted': deleted, 'archived': archived}
+
+
+def clear_week(start, now=None):
+    """Delete one whole week (Monday–Sunday), archiving its check-ins."""
+    start = date.fromisoformat(str(start))
+    if start.weekday() != 0:
+        raise ValueError('请选择周一作为这一周的开始日期')
+    end = start + timedelta(days=6)
+    with db.write() as conn:
+        init(conn)
+        deleted, archived = _archive_and_delete(
+            conn, 'day>=? AND day<=?', (start.isoformat(), end.isoformat()))
+        # weekly_instances rows go with their shift through the foreign key, but SQLite
+        # may have been opened without it, so clear the stale slots explicitly.
+        conn.execute('DELETE FROM weekly_instances WHERE day>=? AND day<=?',
+                     (start.isoformat(), end.isoformat()))
+    return {'week_start': start.isoformat(), 'week_end': end.isoformat(),
+            'deleted': deleted, 'archived': archived}
+
+
+def week_summary(start):
+    """Counts shown before deleting a week: shifts, people, and real check-ins."""
+    start = date.fromisoformat(str(start))
+    end = start + timedelta(days=6)
+    with db.read() as conn:
+        init(conn)
+        row = conn.execute(
+            'SELECT COUNT(*) AS shifts FROM shifts WHERE day>=? AND day<=?',
+            (start.isoformat(), end.isoformat())).fetchone()
+        people = conn.execute(
+            'SELECT COUNT(*) AS n FROM attendance a JOIN shifts s ON s.id=a.shift_id'
+            ' WHERE s.day>=? AND s.day<=?', (start.isoformat(), end.isoformat())).fetchone()
+        checked = conn.execute(
+            'SELECT COUNT(*) AS n FROM attendance a JOIN shifts s ON s.id=a.shift_id'
+            ' WHERE s.day>=? AND s.day<=? AND a.checked_at IS NOT NULL',
+            (start.isoformat(), end.isoformat())).fetchone()
+    return {'week_start': start.isoformat(), 'week_end': end.isoformat(),
+            'shifts': row['shifts'], 'people': people['n'], 'checked': checked['n']}
+
+
+def history():
+    """Archived check-ins kept after 清除所有排班."""
+    with db.read() as conn:
+        init(conn)
+        _init_history(conn)
+        return [dict(r) for r in conn.execute(
+            'SELECT day,start,end,name,checked_at,location,note FROM attendance_history'
+            ' ORDER BY day DESC, start DESC, name').fetchall()]
 
 
 def check_in(shift_id, name):
@@ -198,7 +292,7 @@ def check_in_with_chain(shift_id, name, now=None):
     actually tapped keeps its own late/absent classification.
     """
     from server import duty_settings
-    now = now or datetime.now(TZ)
+    now = now or system_clock.now()
     with db.write() as conn:
         init(conn)
         row = conn.execute('''SELECT a.checked_at,s.day,s.start,s.end FROM attendance a
@@ -231,4 +325,6 @@ def check_in_with_chain(shift_id, name, now=None):
                 conn.execute('UPDATE attendance SET checked_at=? WHERE shift_id=? AND name=?',
                              (stamp, partner['id'], name))
                 chained.append(partner['id'])
+        if not row['checked_at'] or chained:
+            attendance_live.publish(conn)
         return stamp, chained

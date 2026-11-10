@@ -35,6 +35,52 @@ class MysqlIntegrationTest(unittest.TestCase):
         with self.root.cursor() as c: c.execute(f'DROP DATABASE `{self.name}`')
         self.root.close(); self.temp.cleanup()
 
+    def test_push_config_delivery_claims_and_aggregation_on_mysql(self):
+        from server import push_reports as push, admin_store, permissions, member_store, schedule_store
+        from copy import deepcopy
+        permissions.ensure_defaults(); member_store.create('推送成员')
+        sid=schedule_store.save({'day':'2026-11-02','start':'09:00','end':'12:00','members':['推送成员']})
+        with db.write() as conn:
+            conn.execute("UPDATE attendance SET status_override='late' WHERE shift_id=?",(sid,))
+        admin_store.save_smtp({'enabled':True,'host':'smtp.example.com','from_address':'bot@example.com'})
+        config=deepcopy(push.DEFAULTS); config.update(enabled=True,recipients=['one@example.com'])
+        push.save(config,now=datetime(2026,11,6,12,tzinfo=push.TZ))
+        with patch.object(push.mailer,'send') as send:
+            push.run_due(datetime(2026,11,8,9,tzinfo=push.TZ))
+            push.run_due(datetime(2026,11,8,9,1,tzinfo=push.TZ))
+            send.assert_called_once()
+            self.assertIn('推送成员',send.call_args.args[2])
+        self.assertEqual(push.status()['deliveries'][0]['state'],'sent')
+        self.assertEqual(push.load()['next_run'],'2026-11-15T09:00:00+08:00')
+
+    def test_permission_groups_update_shared_access_and_revoke_old_sessions(self):
+        from fastapi.testclient import TestClient
+        from server.app import app
+        from server import admin_store, member_store, permissions
+        member_store.create('operator', 'password123')
+        permissions.set_permissions('operator', permissions.ALL_PERMISSIONS)
+        admin_store.remember_setup('operator')
+        owner = TestClient(app)
+        owner.get('/' + admin_store.path())
+        self.assertEqual(owner.post('/api/admin/login', json={'username':'operator','password':'password123'}).status_code, 200)
+        group = owner.post('/api/admin/permission-groups', json={'name':'日志组','permissions':['logs']}).json()
+        member_store.create('reader', 'password123')
+        for _ in range(2):
+            self.assertEqual(owner.put('/api/admin/members/permissions', json={'username':'reader','group_id':group['id']}).status_code, 200)
+        groups = owner.get('/api/admin/permission-groups').json()['items']
+        self.assertEqual(next(g for g in groups if g['id']==group['id'])['member_count'], 1)
+        reader = TestClient(app)
+        reader.get('/' + admin_store.path())
+        self.assertEqual(reader.post('/api/admin/login', json={'username':'reader','password':'password123'}).status_code, 200)
+        self.assertEqual(reader.get('/api/admin/logs').status_code, 200)
+        self.assertEqual(reader.get('/api/admin/overview').status_code, 403)
+        self.assertEqual(owner.put('/api/admin/permission-groups/'+group['id'], json={'name':'概览组','permissions':['overview']}).status_code, 200)
+        self.assertEqual(reader.get('/api/admin/logs').status_code, 403)
+        self.assertEqual(reader.get('/api/admin/overview').status_code, 200)
+        self.assertEqual(owner.delete('/api/admin/permission-groups/'+group['id']).status_code, 200)
+        self.assertEqual(reader.get('/api/admin/overview').status_code, 401)
+        self.assertEqual(permissions.permissions_of('reader'), set(permissions.DEFAULT_PERMISSIONS))
+
     def test_real_mysql_stores_and_transactions(self):
         from server import admin_store, member_store, schedule_store, weekly_store, chat_store
         from server import permissions
@@ -60,7 +106,9 @@ class MysqlIntegrationTest(unittest.TestCase):
             clock.now.return_value=datetime(2026,11,2,9,0,tzinfo=schedule_store.TZ)
             first=schedule_store.check_in(sid,'张三')
             self.assertEqual(schedule_store.check_in(sid,'张三'),first)
-        self.assertEqual(weekly_store.publish('2026-11-02'), dict(created=0,skipped=28))
+        # Only the two checked-in shifts survive regeneration; the rest are rebuilt.
+        self.assertEqual(weekly_store.publish('2026-11-02'), dict(created=26,skipped=2))
+        self.assertIn(sid, [s['id'] for s in schedule_store.list_day('2026-11-02')])
         schedule_store.delete(sid)
         with db.read() as c:
             self.assertEqual(c.execute('SELECT COUNT(*) AS n FROM attendance WHERE shift_id=?',(sid,)).fetchone()['n'],0)
@@ -71,7 +119,7 @@ class MysqlIntegrationTest(unittest.TestCase):
         with db.read() as c: self.assertIsNone(db.get_setting(c,'rollback-test'))
         chat_store.save_visitor_chats('test-visitor',[dict(id='chat',title='测试',updatedAt=1,messages=[dict(role='user',content='你好')])],'chat')
         self.assertEqual(chat_store.load_visitor_chats('test-visitor')['currentId'],'chat')
-        self.assertEqual(schedule_store.clear_all(), {'deleted': 27})
+        self.assertEqual(schedule_store.clear_all(), {'deleted': 27, 'archived': 1})
         with db.read() as c:
             for table in ('shifts', 'attendance', 'weekly_instances'):
                 self.assertEqual(c.execute(f'SELECT COUNT(*) AS n FROM {table}').fetchone()['n'], 0)
@@ -156,7 +204,7 @@ class MysqlIntegrationTest(unittest.TestCase):
         own = c.get('/api/schedules?day=2026-11-02').json()['items']
         self.assertEqual([s['id'] for s in own], [sid])
         self.assertEqual([{k: v for k, v in m.items() if k != 'status'} for m in own[0]['members']],
-                         [{'name': '张三', 'checked_at': None}])
+                         [{'name': '张三', 'checked_at': None}, {'name': '李四', 'checked_at': None}])
         self.assertEqual(c.delete('/api/admin/schedules').status_code, 401)
         self.assertEqual(c.post('/api/admin/special-schedules', json=dict(day='2026-11-20',start='20:00',end='22:00',members=['李四'])).status_code, 401)
         self.assertEqual(c.get('/api/special-schedules').status_code, 200)
@@ -204,11 +252,13 @@ class MysqlIntegrationTest(unittest.TestCase):
         with closing(sqlite3.connect(source)) as raw, raw as c:
             c.executescript(db.SCHEMA)
             c.execute('INSERT INTO users VALUES(?,?)',('旧用户','hash-value'))
+            c.execute('INSERT INTO push_deliveries VALUES(?,?,?,?,?,?)',('digest-id','2026-10-31','one@example.com','sent','2026-11-01T09:00:00+08:00',''))
             c.execute('INSERT INTO shifts(day,start,end,location,note) VALUES(?,?,?,?,?)',('2026-11-02','08:00','10:00','中心','测试'))
             c.execute('INSERT INTO attendance(shift_id,name,checked_at) VALUES(?,?,?)',(1,'张三','2026-11-02T08:30:00+08:00'))
             c.execute('INSERT INTO attendance(shift_id,name,checked_at) VALUES(?,?,?)',(1,'李四',None))
         counts,backup=migrate(source)
         self.assertEqual(counts['users'],1);self.assertTrue(backup.exists())
+        self.assertEqual(counts['push_deliveries'],1)
         with db.read() as c:
             self.assertEqual(c.execute('SELECT checked_at FROM attendance WHERE name=?',('张三',)).fetchone()['checked_at'],'2026-11-02T08:30:00+08:00')
         with self.assertRaises(ValueError): migrate(source)
@@ -233,6 +283,24 @@ class MysqlIntegrationTest(unittest.TestCase):
         with closing(sqlite3.connect(source)) as raw, raw as c:
             c.executescript(db.SCHEMA)
             c.execute('INSERT INTO users VALUES(?,?)',('旧用户','hash-value'))
+            c.execute('INSERT INTO push_deliveries VALUES(?,?,?,?,?,?)',('digest-id','2026-10-31','one@example.com','sent','2026-11-01T09:00:00+08:00',''))
             c.execute('INSERT INTO attendance(shift_id,name,checked_at) VALUES(?,?,NULL)',(999,'张三'))
         with self.assertRaises(pymysql.IntegrityError): migrate(source)
         with db.read() as c: self.assertEqual(c.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n'],0)
+
+    def test_mysql_heartbeat_is_independent_of_idle_and_uses_role_limits(self):
+        from server import session_policy
+        with patch.object(session_policy.time, 'time', return_value=2000000000.0) as clock:
+            limits = session_policy.save({'member_minutes':120,'admin_minutes':30,
+                'member_response_seconds':45,'admin_response_seconds':120})
+            member = session_policy.create('member','heartbeat-member')
+            admin = session_policy.create('admin','heartbeat-admin')
+            original = session_policy.state(member,'member')['expires_at']
+            clock.return_value += 30
+            self.assertTrue(session_policy.heartbeat(member,'member','heartbeat-member'))
+            self.assertEqual(session_policy.state(member,'member')['expires_at'],original)
+            self.assertEqual(limits['admin_response_seconds'],120)
+            clock.return_value += 45
+            self.assertEqual(session_policy.reap_unresponsive(),1)
+            self.assertIsNone(session_policy.state(member,'member'))
+            self.assertIsNotNone(session_policy.state(admin,'admin'))

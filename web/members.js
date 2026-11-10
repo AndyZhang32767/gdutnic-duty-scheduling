@@ -1,11 +1,7 @@
-let memberItems = [], deletingMember = '', memberMeta = {permissions: [], tree: [], groups: [], me: '', can_grant: false};
+let memberItems = [], deletingMember = '', memberMeta = {groups: [], me: '', can_grant: false};
 let memberQuery = '';
+const unlinkingSso = new Set();
 const memberMatches = member => !memberQuery || member.username.toLowerCase().includes(memberQuery);
-
-function permissionLabel(id) {
-  const found = memberMeta.permissions.find(p => p.id === id);
-  return found ? found.label : id;
-}
 
 function renderMembers() {
   $('memberList').replaceChildren();
@@ -14,9 +10,8 @@ function renderMembers() {
     const row = el('article', 'card member-account'), title = el('div');
     title.append(el('h2', '', member.username), el('p', '', member.active ? '账号已启用' : '账号已停用'));
     const tags = el('div', 'permission-tags');
-    const held = member.permissions || [];
-    if (!held.length) tags.append(el('span', 'permission-tag muted', '无权限'));
-    for (const id of held) tags.append(el('span', 'permission-tag', permissionLabel(id)));
+    tags.append(el('span', 'permission-tag', member.group_name || '会员'));
+    if (member.sso_bound) tags.append(el('span', 'permission-tag', '已绑定 GDUTNIC'));
     title.append(tags);
     const actions = el('div', 'actions');
     actions.append(
@@ -40,6 +35,17 @@ function renderMembers() {
         finally { deletingMember = ''; }
       })
     );
+    if (member.sso_bound) actions.prepend(button('解绑SSO', 'delete', async () => {
+      if (unlinkingSso.has(member.username)) return;
+      if (!confirm(`确认解除「${member.username}」的 GDUTNIC SSO 绑定？该账号的 SSO 登录将失效，重新绑定需验证本地密码。`)) return;
+      unlinkingSso.add(member.username);
+      try {
+        await api('/api/admin/members/sso?username=' + encodeURIComponent(member.username), 'DELETE');
+        await loadMembers();
+        $('membersStatus').textContent = `已解除「${member.username}」的 SSO 绑定。`;
+      } catch (error) { $('membersStatus').textContent = error.message; }
+      finally { unlinkingSso.delete(member.username); }
+    }));
     row.append(title, actions);
     $('memberList').append(row);
   }
@@ -54,15 +60,17 @@ function renderMembers() {
 
 async function loadMembers() {
   if (Array.isArray(window.adminPermissions) &&
-      !['accounts', 'accounts_manage', 'accounts_protected'].some(p => window.adminPermissions.includes(p))) {
+      !window.adminPermissions.includes('members')) {
     $('membersStatus').textContent = '当前账号没有用户管理权限。';
     return;
   }
   $('membersStatus').textContent = '正在加载用户…';
   try {
     const data = await api('/api/admin/members');
-    memberItems = data.items;
-    memberMeta = {permissions: data.permissions || [], tree: data.tree || [], groups: data.groups || [],
+    // Defence in depth: the server already omits the 原始管理员, never render it either.
+    memberItems = (data.items || []).filter(item => item && item.root !== true
+      && item.username !== '原始管理员');
+    memberMeta = {groups: data.groups || [],
       me: data.me || '', can_grant: !!data.can_grant};
     renderMembers();
   } catch (err) {
@@ -71,114 +79,25 @@ async function loadMembers() {
   }
 }
 
-// Collapsible permission tree: a parent checkbox mirrors its leaves, and ticking a
-// parent expands its children so the effect is visible immediately.
-function collectLeaves(node, out = []) {
-  for (const leaf of node.children || []) {
-    if (leaf.children) collectLeaves(leaf, out);
-    else out.push(leaf.id);
-  }
-  return out;
+function updateMemberGroupPreview() {
+  const group = memberMeta.groups.find(item => item.id === $('permissionGroupSelect').value);
+  $('permissionGroupPreview').textContent = group
+    ? `${group.name} · 可访问 ${group.permissions.length} 个页面。修改组内访问范围请前往权限组管理。` : '';
 }
-
-function syncTreeState(nodeEl) {
-  const children = [...nodeEl.querySelectorAll(':scope > .permission-children > .permission-node')];
-  if (!children.length) return;
-  const leafIds = children.flatMap(child => child.dataset.leafIds.split(',').filter(Boolean));
-  const states = children.map(child => {
-    const box = child.querySelector(':scope > .permission-option input');
-    return box.checked ? 'checked' : box.indeterminate ? 'partial' : 'empty';
-  });
-  const self = nodeEl.querySelector(':scope > .permission-option input');
-  self.checked = states.every(state => state === 'checked');
-  self.indeterminate = !self.checked && states.some(state => state !== 'empty');
-  nodeEl.dataset.leafIds = leafIds.join(',');
-}
-
-function deepestFirst(root) {
-  const nodes = [...root.querySelectorAll('.permission-node')];
-  return nodes.sort((a, b) => b.querySelectorAll('.permission-node').length - a.querySelectorAll('.permission-node').length);
-}
-
-function buildPermissionNode(node, held, depth = 0) {
-  const wrapper = el('div', `permission-node depth-${depth}`);
-  const row = el('label', 'permission-option');
-  const input = el('input');
-  input.type = 'checkbox';
-  input.dataset.id = node.id;
-  const hasChildren = !!(node.children && node.children.length);
-  if (!hasChildren) {
-    input.value = node.id;
-    input.checked = held.has(node.id);
-    wrapper.dataset.leafIds = node.id;
-  }
-  const text = el('span');
-  text.append(el('strong', '', node.label));
-  if (node.hint) text.append(el('small', '', node.hint));
-  row.append(input, text);
-  if (hasChildren) {
-    const toggle = el('button', 'permission-toggle', '展开');
-    toggle.type = 'button';
-    row.append(toggle);
-  }
-  wrapper.append(row);
-
-  if (hasChildren) {
-    const children = el('div', 'permission-children');
-    children.hidden = true;
-    for (const child of node.children) children.append(buildPermissionNode(child, held, depth + 1));
-    wrapper.append(children);
-    wrapper.dataset.leafIds = collectLeaves(node).join(',');
-    const leaves = collectLeaves(node);
-    input.checked = leaves.length > 0 && leaves.every(id => held.has(id));
-    input.indeterminate = !input.checked && leaves.some(id => held.has(id));
-
-    const toggleButton = row.querySelector('.permission-toggle');
-    const setExpanded = expanded => {
-      children.hidden = !expanded;
-      toggleButton.textContent = expanded ? '收起' : '展开';
-      wrapper.classList.toggle('expanded', expanded);
-    };
-    toggleButton.onclick = event => { event.preventDefault(); setExpanded(children.hidden); };
-    input.onchange = () => {
-      if (input.checked) {
-        setExpanded(true);
-        for (const sub of wrapper.querySelectorAll('.permission-children')) sub.hidden = false;
-        for (const btn of wrapper.querySelectorAll('.permission-toggle')) btn.textContent = '收起';
-      }
-      // Every descendant box follows the parent, then each sub-group recomputes itself.
-      for (const box of children.querySelectorAll('input[type=checkbox]')) {
-        box.checked = input.checked;
-        box.indeterminate = false;
-      }
-      // Recompute bottom-up so parents see their children's final state.
-      for (const sub of deepestFirst(wrapper)) syncTreeState(sub);
-    };
-    if (input.checked) setExpanded(true);
-    // Bubble changes from any child up through its groups.
-    children.addEventListener('change', event => {
-      if (event.target.matches('input[type=checkbox]')) {
-        for (const sub of deepestFirst(wrapper)) syncTreeState(sub);
-      }
-    });
-  }
-  return wrapper;
-}
-
 function openPermission(member) {
-  if (!memberMeta.can_grant) {
-    $('membersStatus').textContent = '当前账号没有更改权限的资格。';
-    return;
-  }
   $('permissionTitle').textContent = `更改权限 · ${member.username}`;
   $('permissionStatus').textContent = '';
-  const box = $('permissionList');
-  box.replaceChildren();
-  const held = new Set(member.permissions || []);
-  for (const node of (memberMeta.tree || [])) box.append(buildPermissionNode(node, held));
+  const select = $('permissionGroupSelect'); select.replaceChildren();
+  for (const group of memberMeta.groups) {
+    const option = el('option', '', group.name + (group.default ? '（默认）' : ''));
+    option.value = group.id; select.append(option);
+  }
+  select.value = member.group_id;
+  updateMemberGroupPreview();
   $('permissionForm').dataset.username = member.username;
   $('permissionDialog').showModal();
 }
+$('permissionGroupSelect').onchange = updateMemberGroupPreview;
 
 function openPassword(member) {
   $('memberPasswordForm').reset();
@@ -224,14 +143,14 @@ $('memberForm').onsubmit = async e => {
 $('permissionForm').onsubmit = async e => {
   e.preventDefault();
   const form = e.currentTarget, submit = form.querySelector('[type=submit]');
-  const chosen = [...form.querySelectorAll('#permissionList input[type=checkbox]:checked')]
-    .map(i => i.dataset.id).filter(id => !(memberMeta.groups || []).includes(id));
+  const groupId = $('permissionGroupSelect').value;
   submit.disabled = true;
   try {
-    await api('/api/admin/members/permissions', 'PUT', {username:form.dataset.username, permissions:chosen});
+    await api('/api/admin/members/permissions', 'PUT', {username:form.dataset.username, group_id:groupId});
     $('permissionDialog').close();
-    await loadMembers();
-    $('membersStatus').textContent = `已更新「${form.dataset.username}」的权限。`;
+    await refreshAdminPermissions();
+    if (window.adminPermissions.includes('members')) await loadMembers();
+    $('membersStatus').textContent = `已更新「${form.dataset.username}」所属的权限组。`;
   } catch (err) { $('permissionStatus').textContent = err.message; }
   finally { submit.disabled = false; }
 };
@@ -250,4 +169,15 @@ $('memberPasswordForm').onsubmit = async e => {
     $('membersStatus').textContent = `已更改「${name}」的密码，该账号需重新登录。`;
   } catch (err) { $('memberPasswordStatus').textContent = err.message; }
   finally { submit.disabled = false; }
+};
+
+$('cleanupMembers').onclick = async () => {
+  if (!confirm('确认清理默认会员组中未出现在已保存的每周排班或任何已生成排班中的用户？删除账号无法撤销，已有排班和签到记录会保留。')) return;
+  const button = $('cleanupMembers'); button.disabled = true;
+  try {
+    const result = await api('/api/admin/members/cleanup', 'POST');
+    await loadMembers();
+    $('membersStatus').textContent = `已清理 ${result.deleted} 个多余用户。`;
+  } catch (err) { $('membersStatus').textContent = err.message; }
+  finally { button.disabled = false; }
 };

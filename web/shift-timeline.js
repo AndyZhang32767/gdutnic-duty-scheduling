@@ -33,8 +33,9 @@
       .sort((a,b) => a.start-b.start || a.end-b.end);
     const stacked = ranges.some(r => (r.end-r.start)*pixelsPerMs < STYLE.labelWidth+8);
     const laneStep = stacked ? 58 : 44;
-    // A names row needs breathing room between the axis and the duty bars.
-    const baseDutyY = STYLE.dutyY + (ranges.some(r => r.names.length) ? 18 : 0);
+    // Duty bars sit close under the axis; the names are drawn beside the start cap,
+    // on the same line as the bar, so no extra row is reserved above it.
+    const baseDutyY = STYLE.dutyY;
     const ends = [];
     const shared = new Set();
     const labels = [];
@@ -58,13 +59,15 @@
     const lastDutyY = baseDutyY + Math.max(0,ends.length-1)*laneStep;
     // Measure edge-to-edge, including half the blue stroke width.
     const tipY = lastDutyY + STYLE.stroke/2 + STYLE.markerGap;
-    const currentLabelY = Math.max(tipY+41, ...labels.map(l=>l.y+20));
-    // Duty start annotations sit beside each start cap and colour each person by status.
-    // Space is reserved for three names; further people collapse into an ellipsis.
+    // The current-time label must clear both endpoint labels and the duty names below them.
+    // Duty names sit on the same line as the start time label, immediately to its right,
+    // so they read as "20:27 · 张三". Space is reserved for three names; the rest collapse.
+    const nameRight = range => range.x1 + STYLE.labelWidth / 2 + 6;
     const names = ranges.filter(range => range.names.length).map(range => ({
-      x: range.x1 + 6, y: range.y - 6, anchor: 'start',
+      x: nameRight(range), y: range.y + STYLE.majorTick + 15, anchor: 'start',
       parts: range.names.slice(0, 3), more: Math.max(0, range.names.length - 3),
     }));
+    const currentLabelY = Math.max(tipY+41, ...labels.map(l=>l.y+20), ...names.map(n=>n.y+20));
     const ticks = [];
     for (let t=Math.ceil((left-overscan)/(10*MINUTE))*10*MINUTE; t<=right+overscan; t+=10*MINUTE) {
       ticks.push({time:t, x:x(t), major:t % (60*MINUTE) === 0});
@@ -105,7 +108,8 @@
 
   function rebuild(now) {
     const width = host.clientWidth;
-    if (!width) return;
+    // A missing or absurd clock value (e.g. a pinned date far away) must not break the SVG.
+    if (!width || !Number.isFinite(now)) return;
     model = geometry(width,now,shifts);
     svg.setAttribute('viewBox',`0 0 ${width} ${model.height}`);
     svg.setAttribute('height',model.height);
@@ -146,7 +150,7 @@
     });
     nameLabels = model.names.map(label => {
       const element = node('text',{
-        x:label.x,y:label.y,'text-anchor':'start','data-duty-names':''});
+        x:label.x,y:label.y,'text-anchor':label.anchor || 'end','data-duty-names':''});
       label.parts.forEach((part, index) => {
         const last = index === label.parts.length - 1 && !label.more;
         const tspan = node('tspan',{fill:STATUS_COLOR[part.status] || STATUS_COLOR.normal},
@@ -155,7 +159,7 @@
       });
       if (label.more) element.append(node('tspan',{fill:'#7292a1'}, `等${label.parts.length + label.more}人`));
       ranges.append(element);
-      return {element, x:label.x, anchor:'start'};
+      return {element, x:label.x, anchor:label.anchor || 'end', baseAnchor:label.anchor || 'end'};
     });
     duty.append(ranges);
     const current = node('g',{fill:'#932b37','aria-hidden':'true'});
@@ -170,7 +174,9 @@
   }
 
   function move(now) {
+    if (!model || !Number.isFinite(now)) return;
     const dx = -(now-model.now)*model.pixelsPerMs;
+    if (!Number.isFinite(dx)) return;
     for (const group of moving) group.setAttribute('transform',`translate(${dx} 0)`);
     // Keep a visible endpoint's label inside the viewport without moving its cap.
     rangesLabels(dx);
@@ -185,17 +191,27 @@
   }
 
   function rangesLabels(dx) {
-    for (const group of [endpointLabels, nameLabels]) group.forEach(label => {
+    for (const label of endpointLabels) {
       const x = label.x+dx;
       const edge = x<STYLE.labelWidth/2?'start':x>model.width-STYLE.labelWidth/2?'end':label.anchor;
       if (label.anchor!==edge) { label.element.setAttribute('text-anchor',edge); label.anchor=edge; }
-    });
+    }
+    // Names sit left of their start cap; near the left edge they flip to the right so
+    // they are not clipped, and near the right edge they clamp to end-anchored.
+    for (const label of nameLabels) {
+      const x = label.x+dx;
+      const edge = x < 4 ? 'start' : x > model.width - 4 ? 'end' : label.baseAnchor;
+      if (label.anchor!==edge) { label.element.setAttribute('text-anchor',edge); label.anchor=edge; }
+    }
   }
+
+  // Uses the page clock when available so a pinned system time moves the axis too.
+  const shiftNow = () => (typeof window.clockNow === 'function' ? window.clockNow() : Date.now());
 
   function frame() {
     frameId=0;
     if (!canDraw()) return;
-    const now=Date.now();
+    const now=shiftNow();
     // Rebuild infrequently; only two group transforms move between rebuilds.
     if (!model || Math.abs(now-model.now)>30*1000) rebuild(now);
     else if (!reducedMotion.matches || now-lastMotion>=1000) { move(now); lastMotion=now; }
@@ -205,10 +221,12 @@
     if (frameId) cancelAnimationFrame(frameId);
     frameId=0;
     if (!canDraw()) return;
-    rebuild(Date.now());
+    rebuild(shiftNow());
     frameId=requestAnimationFrame(frame);
   }
   window.updateShiftTimeline = data => { shifts=Array.isArray(data)?data:[]; refresh(); };
+  // A clock change (manual system time) must rebuild, not just move by a few pixels.
+  window.refreshShiftTimeline = () => { model = undefined; refresh(); };
   new ResizeObserver(refresh).observe(host);
   document.addEventListener('visibilitychange',refresh);
 })();

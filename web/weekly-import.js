@@ -73,10 +73,20 @@ function rosterFromCsv(text, expectedLabels) {
     .filter(isShiftRow);
   if (!body.length) throw new Error('未找到排班数据，请在第一列填写班次并补充人员。');
   if (body.length > 4) throw new Error(`最多 4 个班次，当前有 ${body.length} 行。`);
+  const seen = new Set();
   return body.map((cells, index) => {
     const label = (cells[0] || '').replace(/\s/g, '') || (expectedLabels?.[index] || `第${index + 1}班`);
+    const slot = shiftIndex(label);
+    if (slot < 0) throw new Error('班次仅支持第1班至第4班');
+    if (seen.has(slot)) throw new Error(`第${slot + 1}班重复，请每个班次只保留一行`);
+    seen.add(slot);
     return { label, days: dayColumns.map(column => column < 0 ? [] : splitNames(cells[column] || '')) };
   });
+}
+
+function shiftIndex(label) {
+  const number = String(label).replace(/\s/g, '').replace(/^第/, '').replace(/班$/, '');
+  return ['1', '2', '3', '4'].includes(number) ? Number(number) - 1 : ['一', '二', '三', '四'].indexOf(number);
 }
 
 function csvCell(value) {
@@ -112,7 +122,8 @@ async function readRosterFile(file) {
 
 async function importRoster(file) {
   const rows = rosterFromCsv(await readRosterFile(file), Array.from({length:4}, (_, i) => `第${i + 1}班`));
-  const values = Array.from({length:4}, (_, i) => rows[i] || {label:`第${i + 1}班`, days:Array.from({length:7}, () => [])});
+  const values = Array.from({length:4}, (_, i) => ({label:`第${i + 1}班`, days:Array.from({length:7}, () => [])}));
+  rows.forEach(row => { values[shiftIndex(row.label)] = row; });
   values.forEach((row, i) => row.days.forEach((names, day) => {
     const input = $(`weekly-members-${i}-${day}`);
     if (input) input.value = names.join('\n');
@@ -121,7 +132,7 @@ async function importRoster(file) {
 }
 
 if (typeof module === 'object' && module.exports) {
-  module.exports = {parseCsv, rosterFromCsv, rosterCsv, splitNames, ROSTER_TEMPLATE, isShiftRow, readRosterFile};
+  module.exports = {parseCsv, rosterFromCsv, rosterCsv, splitNames, ROSTER_TEMPLATE, isShiftRow, readRosterFile, importRoster};
 }
 
 if (typeof $ === 'function' && $('importRoster') && typeof document !== 'undefined') {

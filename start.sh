@@ -54,4 +54,7 @@ EOF
   fi
 fi
 
-exec "$PY" -m uvicorn server.app:app --host 0.0.0.0 --port 50025
+"$PY" -m server.init_data || exit 1
+"$PY" -m server.check_database || exit 1
+
+exec "$PY" -m uvicorn server.app:app --host 0.0.0.0 --port 50025 --no-proxy-headers

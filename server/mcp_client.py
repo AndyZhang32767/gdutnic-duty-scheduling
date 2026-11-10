@@ -36,7 +36,7 @@ class OutlineMcpClient:
         for trust_env in (True, False):
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(90.0, connect=20.0),
-                follow_redirects=True,
+                follow_redirects=False,
                 trust_env=trust_env,
             )
             try:
@@ -94,9 +94,9 @@ class OutlineMcpClient:
                 status=401,
                 payload=_safe_json(response),
             )
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             raise McpError(
-                f"MCP {method} 失败 HTTP {response.status_code}: {response.text[:800]}",
+                "MCP 请求失败，请检查配置或重新登录",
                 status=response.status_code,
                 payload=_safe_json(response),
             )
@@ -107,7 +107,7 @@ class OutlineMcpClient:
         body = await _read_jsonrpc(response)
         if "error" in body:
             err = body["error"]
-            raise McpError(str(err.get("message") or err), payload=err)
+            raise McpError("MCP 请求失败", payload=err)
         return body.get("result")
 
     async def initialize(self) -> dict[str, Any]:
@@ -168,7 +168,7 @@ async def _read_jsonrpc(response: httpx.Response) -> dict[str, Any]:
     try:
         return response.json()
     except json.JSONDecodeError as exc:
-        raise McpError(f"无法解析 MCP 响应: {response.text[:400]}") from exc
+        raise McpError("无法解析 MCP 响应") from exc
 
 
 async def _iter_sse(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, str]]:

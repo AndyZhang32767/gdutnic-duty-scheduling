@@ -1,3 +1,5 @@
+import unittest
+
 from fastapi.testclient import TestClient
 
 import test_schedule
@@ -36,9 +38,9 @@ class TestPermissions(PermissionFixture):
         return client
 
     def test_permission_encoding_and_defaults(self):
-        self.assertEqual(permissions.decode(permissions.encode(['field', 'user'])), {'user', 'field'})
-        self.assertEqual(permissions.decode('bogus,user'), {'user'})
-        self.assertEqual(set(permissions.DEFAULT_PERMISSIONS), {'user'})
+        self.assertEqual(permissions.decode(permissions.encode(['field', 'duty'])), {'duty', 'field'})
+        self.assertEqual(permissions.decode('bogus,duty'), {'duty'})
+        self.assertEqual(set(permissions.DEFAULT_PERMISSIONS), {'duty', 'member_field', 'field_confirm'})
         self.assertTrue(permissions.is_admin('x') is False)
 
     def test_first_administrator_gets_every_permission(self):
@@ -76,29 +78,25 @@ class TestPermissions(PermissionFixture):
         self.assertIsNotNone(member_store.authenticate('admin', 'password123'))
         self.assertIsNone(member_store.authenticate('admin', 'wrong-password'))
 
-    def test_privileged_accounts_are_protected_from_accounts_without_grant(self):
-        self.admin('root', 'password123', permissions.ADMIN_DEFAULTS)
-        self.admin('staff', 'password123', ['user', 'accounts'])
+    def test_members_option_controls_account_management_and_keeps_root_protected(self):
+        from server import root_admin
+        root_admin.create_if_missing('root-password-123')
+        self.admin('staff', 'password123', ['members'])
         client = self.client_for('staff', 'password123')
-        # staff may manage a plain duty account…
         member_store.create('ordinary', 'password123')
         self.assertEqual(client.patch('/api/admin/members', json={'username': 'ordinary', 'active': False}).status_code, 200)
-        # …but not an account that holds permissions.
-        self.assertEqual(client.patch('/api/admin/members', json={'username': 'root', 'reset_password': True}).status_code, 403)
-        self.assertEqual(client.delete('/api/admin/members', params={'username': 'root'}).status_code, 403)
-        self.assertEqual(client.put('/api/admin/members/permissions', json={'username': 'ordinary', 'permissions': ['accounts']}).status_code, 403)
-        # The grant holder can do all of it.
-        owner = self.client_for('root', 'password123')
-        self.assertEqual(owner.put('/api/admin/members/permissions', json={'username': 'ordinary', 'permissions': ['user', 'field']}).status_code, 200)
-        self.assertTrue(permissions.has('ordinary', 'field'))
+        self.assertEqual(client.patch('/api/admin/members', json={'username': root_admin.USERNAME, 'reset_password': True}).status_code, 403)
+        self.assertEqual(client.delete('/api/admin/members', params={'username': root_admin.USERNAME}).status_code, 403)
+        self.assertEqual(client.put('/api/admin/members/permissions', json={'username': 'ordinary', 'permissions': ['field']}).status_code, 400)
+        self.assertEqual(client.get('/api/admin/permission-groups').status_code, 403)
 
     def test_grant_holder_can_change_permissions_and_passwords(self):
         self.admin('root', 'password123', permissions.ADMIN_DEFAULTS)
         member_store.create('target', 'password123')
         owner = self.client_for('root', 'password123')
         self.assertEqual(owner.put('/api/admin/members/permissions',
-                                   json={'username': 'target', 'permissions': ['user', 'schedule']}).status_code, 200)
-        self.assertTrue(permissions.has('target', 'schedule'))
+                                   json={'username': 'target', 'group_id': permissions.save_group('排班负责人', ['overview'])['id']}).status_code, 200)
+        self.assertTrue(permissions.has('target', 'overview'))
         self.assertEqual(owner.put('/api/admin/members/password',
                                    json={'username': 'target', 'password': 'new-password'}).status_code, 200)
         self.assertTrue(member_store.verify('target', 'new-password'))
@@ -107,24 +105,30 @@ class TestPermissions(PermissionFixture):
         self.assertEqual(owner.put('/api/admin/members/password',
                                    json={'username': 'root', 'password': 'another-pass'}).status_code, 200)
         self.assertTrue(member_store.verify('root', 'another-pass'))
-        # An operator without the grant permission cannot change someone else's password.
-        self.admin('operator', 'password123', ['user', 'accounts'])
+        # Members-page access includes account operations; unrelated page access does not.
+        self.admin('operator', 'password123', ['duty', 'field'])
         operator = self.client_for('operator', 'password123')
         self.assertEqual(operator.put('/api/admin/members/password',
                                       json={'username': 'target', 'password': 'hijack-pass'}).status_code, 403)
         self.assertFalse(member_store.verify('target', 'hijack-pass'))
 
-    def test_legacy_administrators_keep_full_permissions_after_migration(self):
-        from server import db
+    def test_legacy_admin_identity_is_now_the_root_account(self):
+        # 旧版管理员不再是一个独立账号：该身份就是原始管理员，权限固定且不出现在列表里。
+        from server import db, root_admin
+        root_admin.create_if_missing('root-secret-123')
         admin_store.register('legacy', 'password123')
         admin_store.remember_setup('legacy')
         member_store.create('ordinary', 'password123')
         with db.write() as conn:
             conn.execute("UPDATE member_accounts SET permissions=''")
         permissions.ensure_defaults()
-        self.assertEqual(permissions.permissions_of('legacy'), set(permissions.ALL_PERMISSIONS))
-        self.assertEqual(permissions.permissions_of('ordinary'), {'user'})
-        self.assertTrue(member_store.verify('legacy', 'password123'))
+        self.assertEqual(permissions.permissions_of(root_admin.username()),
+                         set(permissions.PERMISSIONS))
+        self.assertEqual(permissions.permissions_of('ordinary'), set(permissions.DEFAULT_PERMISSIONS))
+        self.assertTrue(member_store.verify('ordinary', 'password123'))
+        # The old console name is gone rather than left as a second administrator.
+        self.assertFalse(member_store.verify('legacy', 'password123'))
+        self.assertNotIn('legacy', [item['username'] for item in member_store.list_accounts()])
 
     def test_grant_admin_command_restores_full_access(self):
         from server import grant_admin
@@ -135,23 +139,20 @@ class TestPermissions(PermissionFixture):
         with self.assertRaises(LookupError):
             grant_admin.grant('不存在的人')
 
-    def test_account_leaves_are_independent(self):
-        self.admin('root', 'password123', permissions.ADMIN_DEFAULTS)
-        self.admin('ops', 'password123', ['user', 'accounts'])
+    def test_members_page_is_one_independent_option(self):
+        self.admin('ops', 'password123', ['members'])
         client = self.client_for('ops', 'password123')
-        member_store.create('plain', 'password123')
-        # Operating an account is allowed; adding and deleting are not.
-        self.assertEqual(client.patch('/api/admin/members', json={'username': 'plain', 'active': False}).status_code, 200)
-        self.assertEqual(client.post('/api/admin/members', json={'username': 'newbie'}).status_code, 403)
-        self.assertEqual(client.delete('/api/admin/members', params={'username': 'plain'}).status_code, 403)
-        self.admin('manager', 'password123', ['user', 'accounts_manage'])
-        manager = self.client_for('manager', 'password123')
-        self.assertEqual(manager.post('/api/admin/members', json={'username': 'newbie'}).status_code, 200)
-        self.assertEqual(manager.delete('/api/admin/members', params={'username': 'newbie'}).status_code, 200)
-        self.assertEqual(manager.patch('/api/admin/members', json={'username': 'plain', 'active': True}).status_code, 403)
+        self.assertEqual(client.post('/api/admin/members', json={'username': 'newbie'}).status_code, 200)
+        self.assertEqual(client.patch('/api/admin/members', json={'username': 'newbie', 'active': False}).status_code, 200)
+        self.assertEqual(client.delete('/api/admin/members', params={'username': 'newbie'}).status_code, 200)
+        self.assertEqual(client.get('/api/admin/overview').status_code, 403)
+        self.assertEqual(client.get('/api/admin/permission-groups').status_code, 403)
 
     def test_permission_tree_covers_every_leaf(self):
-        self.assertEqual(set(permissions.leaves()), set(permissions.ALL_PERMISSIONS))
+        # 其他设置是派生页选择器，不出现在树上，也不能单独授予。
+        self.assertEqual(set(permissions.leaves()), set(permissions.ALL_PERMISSIONS) - {'settings'})
+        self.assertEqual(set(permissions.GRANTABLE) - set(permissions.DERIVED),
+                         set(permissions.ALL_PERMISSIONS) - set(permissions.DERIVED))
         self.assertTrue(set(permissions.ADMIN_PERMISSIONS) <= set(permissions.ALL_PERMISSIONS))
         self.assertNotIn('user', permissions.ADMIN_PERMISSIONS)
 
@@ -162,3 +163,63 @@ class TestPermissions(PermissionFixture):
         self.assertEqual(client.get('/api/admin/overview').status_code, 200)
         permissions.set_permissions('temp', ['user'])
         self.assertEqual(client.get('/api/admin/overview').status_code, 401)
+
+
+class TestLegacyAdminsFoldIntoRoot(test_schedule.ScheduleTest):
+    """旧版 users 行只代表原始管理员，不再生成第二个可登录管理员账号。"""
+    test_lifecycle_and_repeat_safe_attendance = None
+    test_reject_wrong_person_and_time = None
+    test_invalid_shift = None
+    test_member_only_sees_own_shifts_and_attendance = None
+    test_location_is_optional = None
+    test_duty_rules_control_check_in_window = None
+    test_special_shifts_are_listed_and_edited = None
+    test_check_in_chains_only_pairs_1_2_and_3_4 = None
+    test_pairs_use_day_order_not_only_this_person_shifts = None
+    test_chained_shifts_stay_on_time_while_first_keeps_lateness = None
+    test_overnight_pair_does_not_chain_into_next_day = None
+    test_overnight_appears_and_signs_in_after_midnight = None
+
+    def test_legacy_user_rows_do_not_become_manageable_accounts(self):
+        from server import db, member_store, permissions, root_admin
+        root_admin.create_if_missing('root-secret-123')
+        with db.write() as conn:
+            conn.execute("INSERT INTO users(username,password) VALUES('oldroot','hash')")
+        permissions.ensure_defaults()
+        names = [item['username'] for item in member_store.list_accounts()]
+        assert 'oldroot' not in names
+        assert root_admin.username() not in names
+
+    def test_existing_member_account_is_never_deleted(self):
+        # 旧 users 行可能只是一个真实值班账号；迁移绝不能删除它。
+        from server import db, member_store, permissions, root_admin
+        root_admin.create_if_missing('root-secret-123')
+        member_store.create('AndyZhang123')
+        with db.write() as conn:
+            conn.execute("INSERT INTO users(username,password) VALUES('AndyZhang123','hash')")
+        permissions.ensure_defaults()
+        names = [item['username'] for item in member_store.list_accounts()]
+        assert 'AndyZhang123' in names, '迁移不得删除真实账号'
+        assert root_admin.username() not in names
+
+    def test_root_row_is_purged_from_the_account_table(self):
+        from server import db, root_admin
+        root_admin.create_if_missing('root-secret-123')
+        with db.write() as conn:
+            conn.execute("INSERT INTO member_accounts(username,password,active,permissions)"
+                         " VALUES(?,?,1,'user')", (root_admin.username(), 'x'))
+        permissions.ensure_defaults()
+        with db.read() as conn:
+            assert conn.execute('SELECT username FROM member_accounts WHERE username=?',
+                                (root_admin.username(),)).fetchone() is None
+
+    def test_real_duty_account_is_kept(self):
+        from server import db, member_store, permissions, root_admin, schedule_store
+        root_admin.create_if_missing('root-secret-123')
+        member_store.create_missing(['张三'])
+        # A duty account that happens to share a legacy admin's name must survive.
+        with db.write() as conn:
+            conn.execute("INSERT INTO users(username,password) VALUES('张三','hash')")
+        schedule_store.save(dict(day='2026-11-02', start='09:00', end='10:00', members=['张三']))
+        permissions.ensure_defaults()
+        assert '张三' in [item['username'] for item in member_store.list_accounts()]

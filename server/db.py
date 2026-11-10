@@ -8,15 +8,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from server.init_data import initialize
+
 ROOT = Path(__file__).resolve().parent.parent
+DATA = initialize(ROOT)
 # Both start scripts and CLI maintenance commands use the same configuration.
 try:
     from dotenv import load_dotenv
-    load_dotenv(ROOT / ".env")
+    load_dotenv(DATA / ".env")
 except ImportError:
-    if (ROOT / ".env").exists():
+    if (DATA / ".env").exists():
         raise RuntimeError("请先安装 requirements.txt 中的依赖")
-DATA = ROOT / "data"
 DB_PATH = DATA / "app.sqlite"
 
 _lock = threading.RLock()
@@ -24,6 +26,10 @@ _conn: Any = None
 _local = threading.local()
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS push_deliveries (
+ id TEXT PRIMARY KEY, period_end TEXT NOT NULL, recipient TEXT NOT NULL,
+ state TEXT NOT NULL, updated_at TEXT NOT NULL, error TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -65,7 +71,21 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at);
 CREATE TABLE IF NOT EXISTS member_accounts (
  username TEXT PRIMARY KEY, password TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
- permissions TEXT NOT NULL DEFAULT ''
+ permissions TEXT NOT NULL DEFAULT '', group_id TEXT NOT NULL DEFAULT '', sso_id TEXT NOT NULL DEFAULT '', sso_auto_link_blocked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS login_sessions (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL, username TEXT NOT NULL,
+ last_activity REAL NOT NULL, expires_at REAL NOT NULL, sso_identity TEXT NOT NULL DEFAULT '', last_response REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS keycloak_links (
+ identity_key TEXT PRIMARY KEY, issuer TEXT NOT NULL, subject TEXT NOT NULL,
+ username TEXT NOT NULL UNIQUE, account_key TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS keycloak_flows (
+ id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS permission_groups (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, permissions TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS shifts (
  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, start TEXT NOT NULL,
@@ -78,6 +98,23 @@ CREATE TABLE IF NOT EXISTS attendance (
  name TEXT NOT NULL, checked_at TEXT, status_override TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(shift_id,name)
 );
+CREATE TABLE IF NOT EXISTS swaps (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ shift_a INTEGER NOT NULL, name_a TEXT NOT NULL,
+ shift_b INTEGER NOT NULL, name_b TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ UNIQUE (shift_a, name_a), UNIQUE (shift_b, name_b)
+);
+CREATE TABLE IF NOT EXISTS operation_log (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
+ role TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, detail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operation_log_at ON operation_log(at);
+CREATE TABLE IF NOT EXISTS attendance_history (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, start TEXT NOT NULL,
+ end TEXT NOT NULL, name TEXT NOT NULL, checked_at TEXT NOT NULL,
+ location TEXT NOT NULL DEFAULT '', note TEXT NOT NULL, archived_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS weekly_instances (
  day TEXT NOT NULL, slot INTEGER NOT NULL,
  shift_id INTEGER NOT NULL UNIQUE REFERENCES shifts(id) ON DELETE CASCADE,
@@ -86,9 +123,13 @@ CREATE TABLE IF NOT EXISTS weekly_instances (
 """
 # Added after the initial release; existing databases need an in-place upgrade.
 COLUMNS = {'shifts': {'special': 'INTEGER NOT NULL DEFAULT 0'},
-           'member_accounts': {'permissions': "VARCHAR(191) NOT NULL DEFAULT ''"},
+           'member_accounts': {'permissions': "VARCHAR(191) NOT NULL DEFAULT ''",
+                               'group_id': "VARCHAR(64) NOT NULL DEFAULT ''",
+                               'sso_id': "VARCHAR(64) NOT NULL DEFAULT ''",
+                               'sso_auto_link_blocked': 'TINYINT NOT NULL DEFAULT 0'},
+           'login_sessions': {'sso_identity': "VARCHAR(64) NOT NULL DEFAULT ''", 'last_response': 'DOUBLE NOT NULL DEFAULT 0'},
            'attendance': {'status_override': "VARCHAR(16) NOT NULL DEFAULT ''"},
-           'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0'}}
+           'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0', 'status': 'TINYINT NOT NULL DEFAULT 2'}}
 
 
 
@@ -101,8 +142,9 @@ def backend() -> str:
 
 class MysqlResult:
     def __init__(self, cursor):
-        self.rowcount = cursor.rowcount
-        self.lastrowid = cursor.lastrowid
+        # PyMySQL does not execute empty batches and leaves lastrowid unset.
+        self.rowcount = max(0, cursor.rowcount)
+        self.lastrowid = getattr(cursor, 'lastrowid', None)
         self.rows = list(cursor.fetchall()) if cursor.description else []
         self.offset = 0
 
@@ -168,11 +210,19 @@ def connect():
                 autocommit=True, connect_timeout=10, read_timeout=30, write_timeout=30,
             )
             if os.environ.get("MYSQL_SSL_CA"):
-                options.update(ssl_ca=os.environ["MYSQL_SSL_CA"], ssl_verify_cert=True, ssl_verify_identity=True)
+                certificate = Path(os.environ["MYSQL_SSL_CA"])
+                if not certificate.is_absolute():
+                    certificate = DATA / certificate
+                options.update(ssl_ca=str(certificate), ssl_verify_cert=True, ssl_verify_identity=True)
             try:
                 conn = MysqlConnection(pymysql.connect(**options))
             except pymysql.MySQLError as exc:
-                raise RuntimeError("MySQL 连接失败，请检查 .env 中的 MYSQL_* 配置和数据库服务") from exc
+                message = (f"MySQL 连接失败（{options['host']}:{options['port']}），"
+                           "请检查 data/.env 中的 MYSQL_* 配置和数据库服务。")
+                if exc.args and exc.args[0] in (2002, 2003) and options['host'] in ('127.0.0.1', 'localhost', '::1'):
+                    message += (" 使用项目自带 MySQL 时，请先启动 Docker Desktop / Docker 服务，"
+                                "然后执行 docker compose --env-file data/.env up -d --wait mysql")
+                raise RuntimeError(message) from exc
             try:
                 schema = (ROOT / "sql" / "mysql_schema.sql").read_text(encoding="utf-8")
                 for statement in schema.split(";"):
@@ -183,6 +233,9 @@ def connect():
                             "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()"
                             " AND TABLE_NAME=? AND COLUMN_NAME=?", (table, column)).fetchone():
                             conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                            if table == "login_sessions" and column == "sso_identity":
+                                # Older leases do not identify their login method; require reauthentication.
+                                conn.execute("DELETE FROM login_sessions")
             except Exception:
                 conn.close()
                 raise
@@ -205,6 +258,9 @@ def connect():
                         if isinstance(definition, str):
                             definition = definition.replace('VARCHAR(191)', 'TEXT')
                         conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                        if table == "login_sessions" and column == "sso_identity":
+                            # Older leases do not identify their login method; require reauthentication.
+                            conn.execute("DELETE FROM login_sessions")
             _conn = conn
             _migrate_json(conn)
             _retire_legacy_json()
@@ -228,6 +284,9 @@ def upgrade_table(table):
                 if not isinstance(_conn, MysqlConnection):
                     definition = definition.replace('VARCHAR(191)', 'TEXT').replace('TINYINT', 'INTEGER')
                 _conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                if table == "login_sessions" and column == "sso_identity":
+                    # Older leases do not identify their login method; require reauthentication.
+                    _conn.execute("DELETE FROM login_sessions")
 
 
 @contextmanager

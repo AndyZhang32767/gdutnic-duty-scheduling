@@ -54,5 +54,9 @@ if errorlevel 1 exit /b 1
 exit /b 0
 
 :run
-"%PY%" -m uvicorn server.app:app --host 0.0.0.0 --port 50025
+"%PY%" -m server.init_data
+if errorlevel 1 exit /b 1
+"%PY%" -m server.check_database
+if errorlevel 1 exit /b 1
+"%PY%" -m uvicorn server.app:app --host 0.0.0.0 --port 50025 --no-proxy-headers
 endlocal

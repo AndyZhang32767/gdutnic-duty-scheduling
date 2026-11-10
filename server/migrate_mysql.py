@@ -8,8 +8,9 @@ from pathlib import Path
 
 from server import db
 
-TABLES = ('settings', 'users', 'member_accounts', 'oauth_clients', 'visitors',
-          'chats', 'messages', 'shifts', 'attendance', 'weekly_instances')
+TABLES = ('settings', 'users', 'permission_groups', 'member_accounts', 'oauth_clients', 'visitors',
+          'chats', 'messages', 'shifts', 'attendance', 'attendance_history', 'operation_log',
+          'weekly_instances', 'push_deliveries')
 
 
 def migrate(source):
@@ -46,7 +47,7 @@ def migrate(source):
                         if column not in cols:
                             cols.append(column)
                             for row in rows:
-                                row[column] = 0
+                                row[column] = '' if column in ('permissions', 'group_id', 'status_override') else 0
                     if any(not c.replace('_', '').isalnum() for c in cols):
                         raise ValueError('源表包含不支持的列名')
                     sql = f"INSERT INTO `{table}` ({','.join('`'+c+'`' for c in cols)}) VALUES ({','.join('?' for _ in cols)})"
