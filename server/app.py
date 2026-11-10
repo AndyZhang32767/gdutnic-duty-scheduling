@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
-from server import attendance_live, checkin_access, session_policy, admin_store, chat_store, data_admin, db, duty_settings, field_duty, mailer, operation_log, overview, permissions, push_reports, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
+from server import attendance_live, checkin_access, session_policy, admin_store, chat_store, data_admin, db, duty_settings, field_duty, log_rotation, mailer, operation_log, overview, permissions, push_reports, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
 from server.mcp_client import McpError, OutlineMcpClient, normalize_mcp_url
 from server.oauth import exchange_code, start_oauth
 
@@ -51,6 +51,21 @@ def _chat_helpers():
     return chat
 
 
+async def _log_rotation_worker():
+    """Keep data/logs and the operation log within their size cap.
+
+    Checking file sizes is cheap, but there is no reason to do it on every request, so
+    it runs every five minutes alongside the other background workers.
+    """
+    while True:
+        try:
+            log_rotation.prune()
+            operation_log.prune()
+        except Exception as exc:
+            print(f'[log] 日志滚动暂时失败：{type(exc).__name__}')
+        await asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     admin_store.load()
@@ -76,10 +91,11 @@ async def lifespan(_app: FastAPI):
         await _qq_bot().sync()
     push_task = asyncio.create_task(push_reports.worker())
     presence_task = asyncio.create_task(session_policy.presence_worker())
+    log_task = asyncio.create_task(_log_rotation_worker())
     try:
         yield
     finally:
-        for task in (push_task, presence_task):
+        for task in (push_task, presence_task, log_task):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
@@ -670,13 +686,13 @@ async def admin_register(request: Request) -> dict[str, Any]:
     if root_admin.exists() or admin_store.has_user():
         raise HTTPException(status_code=409, detail="管理员已注册，请直接登录")
     body = await request.json()
-    # The first account is the 原始管理员; its name is fixed and its credentials live in
-    # data/root_admin.json rather than the database.
+    # The first account is the 原始管理员. Its name may be chosen here (空白时用内置名称)
+    # and its credentials live in data/root_admin.json rather than the database.
     password = str(body.get("password") or "")
     try:
         if len(password) < 6:
             raise ValueError("密码至少 6 位")
-        root_admin.create_if_missing(password)
+        root_admin.create_if_missing(password, body.get("username"))
         admin_store.remember_setup(root_admin.username())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -960,7 +976,8 @@ async def admin_logs(request: Request, limit: int = 300, actor: str = "", q: str
     _require_permission(request, "logs")
     limit = max(1, min(int(limit or 300), 1000))
     return {"items": operation_log.list_entries(limit, actor.strip(), q.strip()),
-            "actors": operation_log.actors()}
+            "actors": operation_log.actors(),
+            "stats": operation_log.stats()}
 
 
 @app.get("/api/admin/data/tables")

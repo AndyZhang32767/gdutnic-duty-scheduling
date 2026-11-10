@@ -24,6 +24,15 @@ async function api(url, method='GET', body) {
   return data;
 }
 function el(tag, cls, text) { const n=document.createElement(tag); if(cls)n.className=cls; if(text !== undefined)n.textContent=text; return n; }
+// 登录页用户名的两种状态：登录时必填，首次注册时可选（留空即用内置名称）。
+function syncRootNameField(field, setup) {
+  const label = field.closest('label');
+  if (label) label.hidden = false;
+  field.required = !!setup;
+  field.placeholder = setup ? ' ' : '原始管理员';
+  if (!setup) field.value = '';
+}
+if (typeof module === 'object' && module.exports) module.exports = {syncRootNameField};
 // Semantic icons for card actions; CSS masks inherit each button's current colour.
 const ACTION_ICONS = {
   '编辑班次': 'pencil-outline', '编辑': 'pencil-outline',
@@ -139,14 +148,10 @@ if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
   $('authForm').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget;$('authStatus').textContent='';$('authSubmit').disabled=true;try{await api('/api/admin/'+(setup?'login':'register'),'POST',Object.fromEntries(new FormData(form)));form.reset();await boot();}catch(err){$('authStatus').textContent=err.message;}finally{$('authSubmit').disabled=false;}};
   $('logout').onclick=async()=>{try{await api('/api/admin/logout','POST');await boot();}catch(e){$('status').textContent=e.message;}};
   async function boot(){try{const state=await api('/api/admin/status');setup=state.setup;
-    // 注册成功后服务端固定创建「原始管理员」，表单只收密码。
     window.isRootAdmin = !!state.root;
+    // 首次注册时可自定义原始管理员名称，留空则由服务端使用内置名称「原始管理员」。
     const userField = $('authForm').querySelector('[name=username]');
-    if (userField) {
-      userField.closest('label').hidden = !setup;
-      userField.required = setup;
-      if (!setup) userField.value = '原始管理员';
-    }
+    if (userField) syncRootNameField(userField, setup);
     if ($('rootPasswordForm')) $('rootPasswordForm').hidden = !state.root;
     // Older backends do not send `permissions`; treat that as full access rather than hiding every menu.
     syncClock(state.now);
@@ -161,7 +166,7 @@ if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
     if (typeof window.applyPermissions === 'function') window.applyPermissions(window.adminPermissions);$('authTitle').textContent=setup?'管理员登录':'创建原始管理员';
     if ($('authHint')) $('authHint').textContent = setup
       ? '登录后维护班次与值班人员，查看签到记录。'
-      : '首次创建固定名为「原始管理员」的账号，拥有不可更改的最高权限；只需设置密码。';
+      : '首次创建「原始管理员」，拥有不可更改的最高权限；可自定义名称，留空则使用默认名称。';
     $('authSubmit').textContent=setup?'登录':'创建原始管理员';document.body.classList.toggle('auth-pending',!state.logged_in);$('authCard').hidden=state.logged_in;$('workspace').hidden=!state.logged_in;$('logout').hidden=!state.logged_in;if(state.logged_in)await load();}catch(e){$('authStatus').textContent=e.message;}}
   boot();
 }else bootMember();

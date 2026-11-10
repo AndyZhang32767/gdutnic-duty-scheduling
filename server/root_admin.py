@@ -1,9 +1,10 @@
 """The 原始管理员: one built-in account created on first setup.
 
 Its credentials are kept in ``data/root_admin.json`` (mode 0600), outside the database,
-so they survive a database reset and stay out of every SQL-backed listing. The account
-never appears in 用户管理, cannot be renamed, disabled or deleted, and always holds every
-permission — checks here never consult the editable permission table.
+so they survive a database reset and stay out of every SQL-backed listing. The operator
+may choose the name on the first setup page (blank means the built-in one, kept in
+``USERNAME``), but once created the account cannot be renamed, disabled or deleted, and
+it always holds every permission — checks here never consult the editable table.
 """
 from __future__ import annotations
 
@@ -77,16 +78,33 @@ def is_root(name):
     return str(name) == (str(data['username']) if data else USERNAME)
 
 
-def create_if_missing(password=None):
+def clean_username(value):
+    """Validate an operator-chosen root name, or fall back to the built-in one.
+
+    The name is stored in root_admin.json and compared verbatim on every login, so it
+    only needs to be a sensible display name; it never enters a SQL statement.
+    """
+    name = str(value or '').strip()
+    if not name:
+        return USERNAME
+    if len(name) > 64:
+        raise ValueError('用户名最多 64 个字')
+    if any(ord(char) < 32 for char in name):
+        raise ValueError('用户名不能包含控制字符')
+    return name
+
+
+def create_if_missing(password=None, username=None):
     """Create the account once; later calls never touch an existing record."""
     data = _load()
     if data:
         return {'created': False, 'username': str(data['username'])}
+    name = clean_username(username)
     password = password or secrets.token_urlsafe(18)
-    _save({'username': USERNAME,
+    _save({'username': name,
            'password': admin_store._hash_password(password),
            'created_at': datetime.now().astimezone().isoformat(timespec='seconds')})
-    return {'created': True, 'username': USERNAME}
+    return {'created': True, 'username': name}
 
 
 def bootstrap_existing():

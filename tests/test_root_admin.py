@@ -50,6 +50,38 @@ class TestRootAdmin(test_schedule.ScheduleTest):
         assert root_admin.is_root('root') is False
         assert root_admin.is_root('') is False
 
+    def test_operator_can_choose_the_initial_name(self):
+        created = root_admin.create_if_missing('root-secret-123', '  协会负责人  ')
+        assert created == {'created': True, 'username': '协会负责人'}, created
+        assert root_admin.username() == '协会负责人'
+        assert root_admin.is_root('协会负责人') is True
+        assert root_admin.is_root('原始管理员') is False
+        assert root_admin.verify('root-secret-123') is True
+
+    def test_blank_name_falls_back_to_the_built_in_one(self):
+        for value in (None, '', '   '):
+            with self.subTest(value=value):
+                self.delete_root_file()
+                assert root_admin.create_if_missing('root-secret-123', value)['username'] == root_admin.USERNAME
+                assert root_admin.username() == root_admin.USERNAME
+
+    def test_initial_name_is_validated(self):
+        for value in ('x' * 65, 'bad\x00name', 'line\nbreak'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                root_admin.create_if_missing('root-secret-123', value)
+        assert not root_admin.exists(), 'rejected names must not create a record'
+
+    def test_a_later_call_cannot_change_the_chosen_name(self):
+        root_admin.create_if_missing('root-secret-123', '协会负责人')
+        again = root_admin.create_if_missing('other-password', 'someone-else')
+        assert again == {'created': False, 'username': '协会负责人'}
+
+    def delete_root_file(self):
+        try:
+            root_admin.path().unlink()
+        except OSError:
+            pass
+
     def test_password_can_only_be_rotated_through_the_root_module(self):
         root_admin.create_if_missing('root-secret-123')
         root_admin.change_password('new-password-456')

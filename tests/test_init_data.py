@@ -63,11 +63,11 @@ with TestClient(app) as client:
     if not db.get_setting(db.connect(), 'bootstrap_test_done'):
         assert response.status_code == 302
         assert client.get(response.headers['location']).status_code == 200
-        # The first account is the 原始管理员; its name is fixed by the server.
-        result = client.post('/api/admin/register', json={'username':'ignored',
+        # The first account is the 原始管理员; the operator chooses its name here.
+        result = client.post('/api/admin/register', json={'username':'部署负责人',
                                                           'password':'test-password-123'})
         assert result.status_code == 200, result.text
-        assert result.json()['username'] == '原始管理员'
+        assert result.json()['username'] == '部署负责人'
         member_store.create('重启验证会员')
         assert permissions.permissions_of('重启验证会员') == set(permissions.DEFAULT_PERMISSIONS)
         assert client.post('/api/member/login', json={'username':'重启验证会员',
@@ -80,7 +80,7 @@ with TestClient(app) as client:
     else:
         assert response.status_code == 200
         assert client.get('/' + admin_store.path()).status_code == 200
-        assert client.post('/api/admin/login', json={'username':'原始管理员',
+        assert client.post('/api/admin/login', json={'username':'部署负责人',
                                                      'password':'test-password-123'}).status_code == 200
         # A fresh process and the complete startup must preserve the changed hash,
         # including when roster provisioning encounters the same member again.
@@ -91,7 +91,7 @@ with TestClient(app) as client:
                                                      'password':'changed-member-password'}).status_code == 200
     # The root account never shows up in the account list, even to itself.
     listed = client.get('/api/admin/members').json()['items']
-    assert all(item['username'] != '原始管理员' for item in listed), listed
+    assert all(item['username'] != '部署负责人' for item in listed), listed
     assert client.get('/data/.env').status_code == 404
     assert client.get('/data/app.sqlite').status_code == 404
     assert client.get('/data/root_admin.json').status_code == 404
