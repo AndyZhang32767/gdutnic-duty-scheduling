@@ -767,3 +767,13 @@ form .status-options .status-option input[type=radio]:focus-visible{outline:1.6p
 [data-icon="github"] { --component-icon: url("/icon/github.svg"); }
 [data-icon="issue"] { --component-icon: url("/icon/issue.svg"); }
 [data-icon="contact-email"] { --component-icon: url("/icon/contact-email.svg"); }
+
+/* Align SMTP labels and controls within each grid row. */
+#smtpForm .rules-grid > label { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
+#smtpForm .rules-grid :is(input, select) { width: 100%; min-width: 0; height: 40px; margin: 4.8px 0 0; }
+/* Client type uses the same floating label and control height as Client ID. */
+.sso-grid .outlined-field :is(input, select) { height: 44px; }
+.sso-grid .outlined-select select { margin: 0; border: 0; padding: 12.8px 14.4px; font: inherit; font-size: 12.8px; }
+.sso-grid .outlined-select span { top: 0; transform: translateY(-50%) scale(.75); background: var(--md-surface-low); }
+.sso-grid .outlined-select select:focus { outline: 1.6px solid var(--md-primary-container); background: var(--md-surface-high); }
+.sso-grid .outlined-select select:focus + span { color: var(--md-primary); background: var(--md-surface-high); }

@@ -2040,8 +2040,8 @@ textarea { resize: vertical; min-height: 44.8px; }
 .sso-toggle input:checked + span { background: var(--md-primary); border-color: var(--md-primary); }
 .sso-toggle input:checked + span::after { transform: translateX(20px); background: var(--md-on-primary, white); }
 .sso-toggle input:focus-visible + span { outline: 3px solid var(--md-primary); outline-offset: 4px; }
-.sso-actions { padding: 0 4px 24px; }
-.sso-actions .actions { justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
+.sso-actions { padding: 0; }
+.sso-actions .actions { justify-content: flex-start; flex-wrap: wrap; gap: 12px; }
 .sso-actions [role=status] { min-height: 24px; line-height: 1.6; }
 @media (max-width: 650px) { .sso-grid { grid-template-columns: minmax(0,1fr); } .sso-config .card { padding: 20px; } .sso-enable-card { gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .sso-toggle span, .sso-toggle span::after { transition: none; } }
