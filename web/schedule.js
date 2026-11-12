@@ -195,7 +195,7 @@ async function refreshMemberCheckinState() {
     const previousAccess = window.networkAccess;
     const wasDutyHidden = $('dutyPage').hidden;
     const previousPermissions = [...(window.memberPermissions || [])].sort().join(',');
-    applyMemberPermissions(state.permissions || []);
+    const pageChanged = applyMemberPermissions(state.permissions || []);
     syncClock(state.now);
     rules = state.rules;
     window.setNetworkAccess?.(state.network_access);
@@ -203,6 +203,7 @@ async function refreshMemberCheckinState() {
         (previousAccess.checkin !== state.network_access.checkin || previousAccess.field !== state.network_access.field)) {
       window.dispatchEvent(new Event('network-access-change'));
     }
+    if (pageChanged && $('dutyPage').hidden) await loadCurrentMemberPage();
     if ((previousDay !== today() || wasDutyHidden) && !$('dutyPage').hidden) await load();
     else updateCheckInButtons();
     if (previousPermissions !== [...window.memberPermissions].sort().join(',') && !$('dutyPage').hidden && typeof loadFieldDuty === 'function') await loadFieldDuty();
@@ -289,17 +290,21 @@ async function refreshAdminPermissions() {
 function applyMemberPermissions(granted) {
   const held = new Set(granted);
   window.memberPermissions = held;
-  const canOpen = permission => permission === null || held.has(permission);
-  const pages = {duty: ['dutyTab', 'dutyPage', null],
-    scheduleList: ['scheduleListTab', 'scheduleListPage', 'schedule_list'],
-    confirm: ['fieldConfirmTab', 'fieldConfirmPage', 'field_confirm']};
-  let selected = Object.keys(pages).find(key => $(pages[key][0])?.classList.contains('active') && canOpen(pages[key][2]));
+  const canOpen = needs => needs.some(permission => held.has(permission));
+  // Sidebar order, top to bottom. The overview opens with either of its two actions;
+  // without both, the first remaining page becomes the landing page.
+  const pages = {duty: ['dutyTab', 'dutyPage', ['duty', 'member_field']],
+    scheduleList: ['scheduleListTab', 'scheduleListPage', ['schedule_list']],
+    confirm: ['fieldConfirmTab', 'fieldConfirmPage', ['field_confirm']]};
+  const previous = Object.keys(pages).find(key => $(pages[key][0])?.classList.contains('active'));
+  let selected = previous && canOpen(pages[previous][2]) ? previous : undefined;
   selected ||= Object.keys(pages).find(key => canOpen(pages[key][2]));
   for (const [key, [tab, page, permission]] of Object.entries(pages)) {
     if ($(tab)) { $(tab).hidden = !canOpen(permission); $(tab).classList.toggle('active', key === selected); }
     if ($(page)) $(page).hidden = key !== selected;
   }
   if ($('memberNoAccess')) $('memberNoAccess').hidden = !!selected;
+  return selected !== previous;
 }
 async function loadCurrentMemberPage() {
   if ($('scheduleListTab')?.classList.contains('active') && typeof loadMemberSchedules === 'function') { await loadMemberSchedules(); return; }

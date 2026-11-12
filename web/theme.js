@@ -16,7 +16,7 @@
       button.title = description;
     });
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = dark ? '#0F1417' : '#186078';
+    if (meta) meta.content = dark ? '#0F1417' : '#1B6D88';
   }
   apply(); // Apply before the first paint, including the login screen.
   document.addEventListener('DOMContentLoaded', () => {

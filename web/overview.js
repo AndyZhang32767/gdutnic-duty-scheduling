@@ -192,7 +192,6 @@ function renderOverview(changedIds = null) {
   if (!overviewData) return;
   const stats = overviewData.stats;
   $('attendanceRate').textContent = stats.rate === null ? '—' : `${stats.rate}%`;
-  $('attendanceDetail').textContent = `本月出勤率（正常 ${stats.normal} / 总出勤 ${stats.total}）`;
   $('lateCount').textContent = stats.late;
   $('absentCount').textContent = stats.absent;
   items = overviewData.timeline;

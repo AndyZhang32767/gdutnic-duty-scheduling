@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>网络服务协会 · 排班管理</title>
   <link rel="icon" href="/icon/gdutnic.png">
-  <meta name="theme-color" content="#186078">
+  <meta name="theme-color" content="#1B6D88">
 <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/schedule.css">
@@ -59,7 +59,7 @@
         </section>
         <div class="overview-summary-row">
         <div class="stats overview-stats">
-          <div data-icon="calendar-check-outline" class="stat-with-icon"><strong id="attendanceRate">—</strong><span id="attendanceDetail">本月出勤率（正常 / 总出勤）</span></div>
+          <div data-icon="calendar-check-outline" class="stat-with-icon"><strong id="attendanceRate">—</strong><span>本月出勤率</span></div>
           <div data-icon="clock-alert-outline" class="stat-with-icon"><strong id="lateCount">0</strong><span>本月迟到数</span></div>
           <div data-icon="account-off-outline" class="stat-with-icon"><strong id="absentCount">0</strong><span>本月旷班数</span></div>
         </div>
@@ -136,6 +136,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 </pre></details>
           </footer>
+        </article>
+        <article id="wikiPanel" class="about-panel wiki-panel">
+          <header class="wiki-head"><h2 data-icon="clipboard-text-outline">Wiki</h2><p>每个功能在哪里、做什么。</p></header>
+          <p id="wikiStatus" class="wiki-status" role="status">正在读取…</p>
+          <div id="wikiBody" hidden>
+            <p id="wikiPartial" class="wiki-status" hidden>只显示当前账号有权限使用的管理端页面和设置项。</p>
+            <details id="wikiOverviewBox" class="wiki-section wiki-overview" open>
+              <summary><h3>速览</h3><span id="wikiOverviewHint" class="wiki-count"></span></summary>
+              <div id="wikiOverview" class="wiki-tiles"></div>
+            </details>
+            <div id="wikiAreas"></div>
+          </div>
         </article>
       </section>
 
@@ -300,6 +312,12 @@ SOFTWARE.
             <thead><tr><th scope="col">时间</th><th scope="col">操作账号</th><th scope="col">操作内容</th></tr></thead>
             <tbody id="logRows"></tbody>
           </table>
+        </div>
+        <div class="data-pager">
+          <span class="data-pager-spacer"></span>
+          <button id="logPrev" class="btn tonal icon-btn" type="button" data-icon="chevron-left" aria-label="上一页" disabled></button>
+          <span id="logPage" class="hint range-label"></span>
+          <button id="logNext" class="btn tonal icon-btn" type="button" data-icon="chevron-right" aria-label="下一页" disabled></button>
         </div>
       </section>
 
@@ -602,6 +620,7 @@ SOFTWARE.
 </div>
 <script src="/static/password-visibility.js"></script><script src="/static/animated-button.js"></script>
 <script src="/static/ripple.js"></script>
+<script src="/static/search-bar.js"></script>
 <script src="/static/md-select.js"></script>
 <script src="/static/shift-timeline.js"></script>
 <script src="/static/checkin-window.js"></script>
@@ -627,6 +646,8 @@ SOFTWARE.
 <script src="/static/push-layout.js"></script>
 <script src="/static/push.js"></script>
 <script src="/static/keycloak-login.js"></script>
+<script src="/static/nav-drawer.js"></script>
 <script src="/static/idle-session.js"></script><script src="/static/attendance-live.js"></script>
+<script src="/static/outlined-fields.js"></script>
 </body>
 </html>

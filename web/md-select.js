@@ -15,6 +15,7 @@
   search.setAttribute('aria-controls', 'mdSelectList');
   search.setAttribute('aria-expanded', 'true');
   searchBox.append(search);
+  window.attachSearchClear(searchBox);
   list.id = 'mdSelectList';
   list.setAttribute('role', 'listbox');
   empty.textContent = '无匹配结果';

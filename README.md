@@ -33,7 +33,8 @@ python -m server.init_data && docker compose --env-file data/.env up -d --wait m
 gdutnic-duty-scheduling/
 ├── server/                 后端（FastAPI）
 │   ├── app.py              应用入口、路由、会话与权限校验
-│   ├── app_version.py      部署版本读取（环境变量、VERSION 文件或 Git）
+│   ├── app_version.py      写死的版本号常量
+│   ├── wiki.py             解析 description/description.md，供关于页的 Wiki 卡片使用
 │   ├── db.py               MySQL/SQLite 连接、事务与建表升级
 │   ├── schedule_store.py   班次、签到与连班自动签到
 │   ├── weekly_store.py     每周模板、CSV 名单与按日期生成
@@ -54,6 +55,7 @@ gdutnic-duty-scheduling/
 │   ├── sso_settings.py     后台 SSO 配置与环境变量回退
 │   ├── attendance_live.py  考勤变更版本号与长轮询通知
 │   ├── log_rotation.py     data/logs 文件按 10MB / 5MB 截断
+│   ├── table_rotation.py   出勤归档、外勤、调班、推送、SSO 绑定按 10MB / 7MB 裁剪
 │   ├── migrate_mysql.py    SQLite → MySQL 迁移
 │   ├── provision_members.py 补齐名单账号
 │   └── grant_admin.py      给账号补授全部权限
@@ -77,6 +79,7 @@ gdutnic-duty-scheduling/
 │   ├── checkin-window.js   签到窗口判定
 │   ├── member-network.js   成员端网络状态与按钮置灰
 │   ├── idle-session.js     无操作倒计时与自动退出
+│   ├── nav-drawer.js       窄屏下的顶栏与左侧导航抽屉
 │   ├── attendance-live.js  全局心跳与考勤长轮询
 │   ├── keycloak-login.js   登录页 SSO 入口显隐
 │   ├── keycloak-bind.js    未自动匹配时的本地账号绑定
@@ -87,11 +90,12 @@ gdutnic-duty-scheduling/
 │   ├── data-admin.js       数据管理：预览、编辑、删除数据库记录
 │   ├── keycloak-bind.html  首次 SSO 绑定页（输入本地账号密码）
 │   ├── theme.js / theme.css  两端主题切换、系统主题跟随与深色配色
-│   ├── about.js            管理端关于页与版本读取
+│   ├── about.js            管理端关于页：版本读取与 Wiki 卡片
 │   ├── auth-background.js  登录页轻量 CSS 渐变背景显隐控制
 │   └── styles.css / schedule.css / auth-background.css  Material You 样式
 ├── sql/mysql_schema.sql    MySQL 建表语句
 ├── docs/                   部署与验证记录（Keycloak 配置、安全复核）
+├── description/            功能说明 description.md（关于页 Wiki 卡片的内容来源）
 ├── icon/                   本地图标：站点 Logo、主题、关于、GitHub 及组件 SVG
 ├── data/                   运行时数据（不提交）
 │   ├── .env                数据库凭证与运行配置
@@ -111,6 +115,10 @@ gdutnic-duty-scheduling/
 ### 浅色与深色主题
 
 管理端和用户端导航栏「网络服务协会」右侧提供仅含图标的太阳／月亮主题按钮，图标表示当前模式。每次打开或刷新页面时重新读取系统主题。手动切换仅对当前页面生效；尚未手动切换时，页面会同步系统主题变化。浅色模式保留原有配色；深色主题使用 Material 3 蓝青色配色，错误、成功和警告统一采用 Container 背景与 On Container 文字的层级。按钮 SVG 图标跟随前景色，协会 Logo 在深色下显示为浅色。主题图标分别为 `/icon/weather-sunny.svg` 与 `/icon/weather-night.svg`。主题由 `web/theme.js` 和 `web/theme.css` 统一管理，最低兼容目标为 Chromium / Edge 134。
+
+### 移动端导航
+
+窗口宽度不超过 800px 时，两端的侧栏收起为左侧抽屉：页面顶部出现一条顶栏，左侧为菜单按钮，右侧显示当前页面名称。点菜单按钮滑出抽屉；选择页面、点遮罩或按 Esc 关闭，切换主题时抽屉保持打开。导航项较多时在抽屉内滚动，「退出登录」始终固定在底部。窄屏下页面标题区随内容滚动，不再吸顶。由 `web/nav-drawer.js` 与 `web/schedule.css` 末尾的规则实现，桌面宽度下不受影响。
 
 ### 登录背景浏览器兼容
 
@@ -213,14 +221,16 @@ docker compose --env-file data/.env up -d --wait mysql
 - 联系邮箱：[andyzhang32767@gmail.com](mailto:andyzhang32767@gmail.com)。
 - GitHub 图标从 Primer Octicons 下载后保存在 `/icon/github.svg`，运行时不依赖外链图标；来源与许可见 `icon/README.md` 和 `icon/github-LICENSE.txt`。
 
-版本由 `/api/admin/about` 在管理员登录后提供，按以下顺序读取：
+版本号固定写在 `server/app_version.py` 的 `VERSION` 常量中（当前为 `V1.2-dev`），由 `/api/admin/about` 在管理员登录后提供；不读取环境变量、`VERSION` 文件或 Git 信息。发布新版本时修改该常量。更新后端代码后需重启应用，才能加载新增或修改的接口。
 
-1. 非空的 `APP_VERSION` 环境变量。
-2. 项目根目录非空的 `VERSION` 文件。
-3. `git describe --tags --always --dirty` 的输出；工作区有已跟踪文件的未提交修改时带有 `-dirty` 标记。
-4. 无法读取上述信息时显示「开发版（无版本标记）」。
+**Wiki 卡片**：关于卡片下方的第二张卡片，内容来自 `description/description.md`，由 `/api/admin/about` 随版本号一起返回，登录管理端即可查看。
 
-发布不含 `.git` 的源码包或镜像时，应设置 `APP_VERSION` 或提供 `VERSION` 文件。更新后端代码后需重启应用，才能加载新增或修改的接口。
+- 最上面的「速览」平铺列出文档里所有标为「核心」的功能，每项显示功能名、位置和说明；整块可以折叠，默认展开。
+- 内容按当前账号的权限过滤：管理端的页面只有拥有同名权限时才列出，「其他设置」里的每一项还要拥有「所需权限」列写的权限，「仅原始管理员」的项只有原始管理员能看到。成员端、登录页和自动行为的说明对所有管理员可见。有内容被过滤时卡片顶部会提示。
+- 下面按文档的二级标题分区（成员端、SSO 绑定页、管理端、自动行为），每个三级标题是一个可折叠的页面，展开后显示该页的位置、每项功能的重要程度与说明，以及表格之外的补充说明。
+- 修改 `description/description.md` 后重新打开关于页即可看到新内容，不需要重启。文档约定：每个页面写一行「位置：…」，功能表的表头含「功能」（或「行为」）、「重要程度」、「说明」三列，可选「所需权限」列；其他表格不显示。
+- 部署时没有带上这个文件，卡片会提示未附带文档，其余功能不受影响。
+
 
 ### 消息推送
 
@@ -297,7 +307,6 @@ SSO 默认关闭，且身份提供方地址默认为空：本应用不带任何�
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
 | `LOGIN_TRUSTED_PROXIES` | 登录限流可信任的代理 IP / CIDR，逗号分隔；仅这些 socket 来源可通过代理覆写的 `X-Real-IP` 区分客户端，不影响打卡来源 IP 判定 | 空，不信任转发头 |
-| `APP_VERSION` | 「关于」页显示的部署版本，优先于根目录 `VERSION` 文件与 Git 版本 | 未设置时依次回退 |
 | `DB_BACKEND` | `mysql` 或 `sqlite` | `mysql` |
 | `MYSQL_HOST` | 数据库地址 | `127.0.0.1` |
 | `MYSQL_PORT` | 数据库端口 | `3306`（`.env.example` 中为 Docker 的 `3307`） |
@@ -373,9 +382,10 @@ python -m uvicorn server.app:app --host 0.0.0.0 --port 50025 --no-proxy-headers
   - `weekly_roster.json`：每周名单种子（仅在没有已保存模板时读取）；
   - `imports/`：排班表与 CSV 模板等导入文件；
   - `app.sqlite`、`backups/`：旧版 SQLite 与迁移备份。
+  - **记录表容量上限**：出勤归档、外勤记录、调班、推送发送记录、SSO 绑定这五张表各自独立计量，任一张超过 10 MB 时自动删除最旧的记录，直到降到 7 MB 以下；后台每 5 分钟检查一次，无需手动清理，界面上不另行提示。出勤归档与调班按写入先后、外勤按月份、推送按最近更新时间、SSO 绑定按绑定时间判断新旧（升级前已有的绑定没有绑定时间，视为最旧）。被清理的出勤归档与外勤月份不再计入统计；被清理的调班只删除记录，已互换的班次保持不变；被清理的 SSO 绑定会同时注销对应账号的 SSO 登录，该账号需重新绑定。操作日志仍按 10 MB / 5 MB 处理。
   - 会话租约、SSO 绑定与 SSO 配置保存在应用数据库内（不是 `data/` 里的独立文件），因此重置 MySQL 会同时清除这些状态。
 - 首次初始化创建 `data/`、配置及 `mysql/`、`mysql-config/`、`imports/`、`backups/`、`logs/`、`certs/` 子目录。SQLite 表和会话密钥按需创建；不生成包含真实人员的种子名单。
-- 升级现有部署时，启动过程会补齐新表与字段（`login_sessions`、`keycloak_links`、`keycloak_flows`，以及会员账号的 `sso_id`、`sso_auto_link_blocked`），不会覆盖已有数据；首次加入心跳功能时会清空旧登录租约，所有人在升级后需要重新登录一次。
+- 升级现有部署时，启动过程会补齐新表与字段（`login_sessions`、`keycloak_links`、`keycloak_flows`，以及会员账号的 `sso_id`、`sso_auto_link_blocked` 和 SSO 绑定的 `linked_at`），不会覆盖已有数据；首次加入心跳功能时会清空旧登录租约，所有人在升级后需要重新登录一次。
 - SQL 导出统一放在 `data/backups/`，证书放在 `data/certs/`。`MYSQL_SSL_CA` 的相对路径相对于 `data/`。备份 MySQL 使用逻辑备份（如 `mysqldump`），或停库后备份 `data/mysql/`。
 - `sql/mysql_schema.sql` 只有建表结构，保留在源码中；`.env.example` 只有占位配置。Git 忽略整个 `data/`，并额外忽略数据库文件、SQL 导出、私钥、证书及人员表格，防止误放到其他目录后被提交。
 

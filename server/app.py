@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
 
-from server import attendance_live, checkin_access, session_policy, admin_store, data_admin, db, duty_settings, field_duty, log_rotation, mailer, operation_log, overview, permissions, push_reports, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
+from server import attendance_live, checkin_access, session_policy, admin_store, data_admin, db, duty_settings, field_duty, log_rotation, mailer, operation_log, overview, permissions, push_reports, table_rotation, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -46,7 +46,7 @@ async def _attendance_status_worker():
 
 
 async def _log_rotation_worker():
-    """Keep data/logs and the operation log within their size cap.
+    """Keep data/logs, the operation log and the capped record tables within their size cap.
 
     Checking file sizes is cheap, but there is no reason to do it on every request, so
     it runs every five minutes alongside the other background workers.
@@ -55,6 +55,7 @@ async def _log_rotation_worker():
         try:
             log_rotation.prune()
             operation_log.prune()
+            table_rotation.prune()
         except Exception as exc:
             print(f'[log] 日志滚动暂时失败：{type(exc).__name__}')
         await asyncio.sleep(300)
@@ -515,10 +516,14 @@ def _schedule_error(exc):
 
 
 @app.get("/api/admin/logs")
-async def admin_logs(request: Request, limit: int = 300, actor: str = "", q: str = ""):
+async def admin_logs(request: Request, limit: int = 100, actor: str = "", q: str = "", offset: int = 0):
     _require_permission(request, "logs")
-    limit = max(1, min(int(limit or 300), 1000))
-    return {"items": operation_log.list_entries(limit, actor.strip(), q.strip()),
+    limit = max(1, min(int(limit or 100), 100))
+    offset = max(0, offset)
+    items = operation_log.list_entries(limit, actor.strip(), q.strip(), offset)
+    total = operation_log.count_entries(actor.strip(), q.strip())
+    has_more = offset + limit < total
+    return {"items": items, "has_more": has_more, "total": total,
             "actors": operation_log.actors(),
             "stats": operation_log.stats()}
 
@@ -1417,10 +1422,13 @@ app.include_router(keycloak.router)
 
 @app.get("/api/admin/about")
 async def admin_about(request: Request):
-    if not _session_account(request):
+    name = _session_account(request)
+    if not name:
         raise HTTPException(status_code=401, detail="请先登录管理员")
-    from server.app_version import current_version
-    return {"version": current_version(ROOT)}
+    from server import wiki
+    from server.app_version import VERSION
+    guide = wiki.for_account(permissions.permissions_of(name), root_admin.is_root(name))
+    return {"version": VERSION, "guide": guide}
 
 
 @app.get("/{slug}")
