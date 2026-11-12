@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import threading
+import os
+import ipaddress
 import time
 from collections import OrderedDict
 
@@ -73,6 +75,24 @@ class AttemptLimiter:
 def client_key(request) -> str:
     """Key on the socket peer; never trust X-Forwarded-For without a known proxy."""
     return request.client.host if request.client else "unknown"
+
+
+def login_client_key(request) -> str:
+    """Only an explicitly trusted socket peer may supply the single-hop X-Real-IP.
+
+    This is deliberately separate from client_key used for check-in network rules.
+    The trusted reverse proxy must overwrite X-Real-IP rather than pass client input.
+    """
+    peer = client_key(request)
+    try:
+        address = ipaddress.ip_address(peer)
+        networks = [ipaddress.ip_network(value.strip(), strict=False)
+                    for value in os.environ.get('LOGIN_TRUSTED_PROXIES', '').split(',') if value.strip()]
+        if not any(address in network for network in networks):
+            return peer
+        return str(ipaddress.ip_address(request.headers.get('x-real-ip', '')))
+    except ValueError:
+        return peer  # Malformed configuration or header fails closed.
 
 
 class IdentityCache:
