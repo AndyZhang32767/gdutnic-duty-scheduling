@@ -23,7 +23,7 @@ TABLES = {
     'attendance': {
         'label': '考勤人员', 'pk': ['shift_id', 'name'],
         'editable': ['checked_at', 'status_override'],
-        'search': ['name', 'checked_at', 'status_override'],
+        'search': ['name', 'checked_at', 'status_override', 'final_status'],
         'masked': [],
         # The shift's own date and times are the meaningful timestamp for this row;
         # `checked_at` is the sign-in moment and may be empty.

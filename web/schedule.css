@@ -82,7 +82,7 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 /* Week/month stepping: a compact pair of arrows around the visible range. */
 .range-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .range-label{min-width:15em;text-align:center;font-variant-numeric:tabular-nums}
-.range-today{display:inline-flex}
+.range-today{display:inline-flex;gap:8px}
 @media(max-width:650px){
   .range-head{flex-wrap:wrap;gap:8px}
   .range-nav{width:100%;justify-content:space-between}
@@ -777,3 +777,15 @@ form .status-options .status-option input[type=radio]:focus-visible{outline:1.6p
 .sso-grid .outlined-select span { top: 0; transform: translateY(-50%) scale(.75); background: var(--md-surface-low); }
 .sso-grid .outlined-select select:focus { outline: 1.6px solid var(--md-primary-container); background: var(--md-surface-high); }
 .sso-grid .outlined-select select:focus + span { color: var(--md-primary); background: var(--md-surface-high); }
+
+/* Reserve feedback space immediately above each settings card's action buttons. */
+#settingsPage .settings-action-status { min-height: 24px; margin: 12.8px 0; line-height: 1.6; }
+
+#dailyPage #refresh { width: 40px; height: 40px; min-width: 40px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+#dailyPage .stats.overview-stats > div { border-radius: 999px; }
+
+.overview-summary-row { display: flex; align-items: center; gap: 12.8px; margin-bottom: 25.6px; }
+#dailyPage .overview-summary-row > .overview-stats { flex: 1; min-width: 0; margin-bottom: 0; }
+#dailyPage .overview-summary-row > #refresh { flex-shrink: 0; }
+
+#weekToday:disabled { opacity: 1; color: var(--md-outline); background: var(--md-surface-low); }

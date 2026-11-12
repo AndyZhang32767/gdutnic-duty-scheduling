@@ -57,12 +57,15 @@
           <div><p class="eyebrow">GDUT NETWORK INFORMATION CENTER</p><h1 data-icon="chart-box-outline">概览</h1><p>查看本月出勤情况、当前值班与本周排班。</p></div>
 
         </section>
+        <div class="overview-summary-row">
         <div class="stats overview-stats">
           <div data-icon="calendar-check-outline" class="stat-with-icon"><strong id="attendanceRate">—</strong><span id="attendanceDetail">本月出勤率（正常 / 总出勤）</span></div>
           <div data-icon="clock-alert-outline" class="stat-with-icon"><strong id="lateCount">0</strong><span>本月迟到数</span></div>
           <div data-icon="account-off-outline" class="stat-with-icon"><strong id="absentCount">0</strong><span>本月旷班数</span></div>
         </div>
-        <div class="section-head"><h2 data-icon="clock-outline">当前值班</h2><div><button id="refresh" class="btn tonal" data-icon="refresh">刷新</button><button id="add" class="btn primary" data-icon="plus">新增班次</button></div></div>
+        <button type="button" id="refresh" class="btn tonal" data-icon="refresh" aria-label="刷新概览" title="刷新概览"></button>
+        </div>
+        <div class="section-head"><h2 data-icon="clock-outline">当前值班</h2></div>
         <div id="shiftTimeline" class="shift-timeline"></div>
         <p id="status" role="status" aria-live="polite"></p>
         <section class="section-head range-head"><h2 id="weekTitle" data-icon="calendar-week-outline">本周排班</h2><div class="range-nav"><button type="button" id="weekPrev" class="btn tonal icon-btn" data-icon="chevron-left" aria-label="上一周" title="上一周" disabled></button><span id="weekRange" class="hint range-label"></span><button type="button" id="weekNext" class="btn tonal icon-btn" data-icon="chevron-right" aria-label="下一周" title="下一周" disabled></button><span class="range-today"><button type="button" id="weekToday" class="btn tonal" data-icon="calendar-outline">回到本周</button><button type="button" id="weekClear" class="btn danger" data-icon="calendar-remove-outline" disabled>删除本周排班</button></span></div></section>
@@ -297,7 +300,7 @@ SOFTWARE.
             <label>旷班时间（分钟）<input name="absent_minutes" type="number" min="1" max="480" step="1" required></label>
           </div>
           <p class="hint">三个时间都从班次开始时间起算。提前打卡：开始前多少分钟起显示“确认到岗签到”。迟到：开始后多少分钟内的签到记为迟到。旷班：开始后超过多少分钟仍未签到，或超过该时间才签到，都记为旷班；因此旷班时间必须大于迟到时间。</p>
-          <p id="rulesStatus" role="status" aria-live="polite"></p>
+          <p id="rulesStatus" class="settings-action-status" role="status" aria-live="polite"></p>
           <button type="submit" class="btn primary" data-icon="content-save-outline">保存设置</button>
         </form>
 
@@ -316,7 +319,7 @@ SOFTWARE.
             <label>管理页面无响应时限（秒）<input name="admin_response_seconds" type="number" min="30" max="3600" step="1" value="90" required></label>
           </div>
           <p class="hint">默认均为 90 秒，可设置 30～3600 秒。同一浏览器同一端的标签页共享心跳，其他设备独立检测。</p>
-          <p id="sessionTimeoutStatus" role="status" aria-live="polite"></p>
+          <p id="sessionTimeoutStatus" class="settings-action-status" role="status" aria-live="polite"></p>
           <button type="submit" class="btn primary" data-icon="content-save-outline">保存自动退出设置</button>
         </form>
 
@@ -329,9 +332,9 @@ SOFTWARE.
             <label>分钟<input id="clockMinute" type="number" min="0" max="59" step="1" value="0" required></label>
           </div>
           <p class="hint">取消自动设置后，按下「设置」会从所选的日期 小时:分钟:00 开始计时，签到窗口与统计都按该时间计算。</p>
-          <p id="clockStatus" role="status" aria-live="polite"></p>
-          <button type="submit" class="btn primary" data-icon="tune-variant">设置</button>
           <p class="clock-now">当前时间：<strong id="clockNow">—</strong></p>
+          <p id="clockStatus" class="settings-action-status" role="status" aria-live="polite"></p>
+          <button type="submit" class="btn primary" data-icon="tune-variant">设置</button>
         </form>
 
         <form id="smtpForm" method="post" class="card rules-card" hidden>
@@ -357,7 +360,7 @@ SOFTWARE.
             <label>发件人名称<input name="from_name" id="smtpFromName" type="text" autocomplete="off" placeholder="网络服务协会"></label>
           </div>
           <label class="review-check"><input id="smtpEnabled" type="checkbox"><span>启用 SMTP</span></label>
-          <p id="smtpStatus" role="status" aria-live="polite"></p>
+          <p id="smtpStatus" class="settings-action-status" role="status" aria-live="polite"></p>
           <div class="actions">
             <button type="submit" class="btn primary" data-icon="content-save-outline">保存 SMTP 设置</button>
             <button type="button" id="smtpTest" class="btn tonal" data-icon="send">发送测试邮件</button>
@@ -379,7 +382,7 @@ SOFTWARE.
               <label for="fieldAccessMode">匹配方式</label><select id="fieldAccessMode" name="field_mode"><option value="exclude">排除以下地址</option><option value="allow">仅允许以下地址</option></select>
               <label for="fieldAccessEntries">IP / 掩码（一行一个）</label><textarea id="fieldAccessEntries" name="field_entries" rows="8" spellcheck="false" placeholder="192.168.1.0/24&#10;localhost" maxlength="20000"></textarea>
             </fieldset>
-          </div><p id="checkinAccessPeer" class="hint"></p><p id="checkinAccessStatus" role="status" aria-live="polite"></p>
+          </div><p id="checkinAccessPeer" class="hint"></p><p id="checkinAccessStatus" class="settings-action-status" role="status" aria-live="polite"></p>
           <button type="submit" class="btn primary">保存网络规则</button>
         </form>
       </section>
@@ -409,7 +412,7 @@ SOFTWARE.
               <label id="ssoCustomClaimField" class="outlined-field" hidden><input id="ssoCustomClaim" type="text" placeholder=" " maxlength="255"><span>自定义字段名称</span></label>
               <p class="hint">首次接入建议先使用密码绑定，确认实际返回字段后再开启自动匹配。仅使用由组织维护、用户不能任意修改的字段；字段值需与本地用户名一致。</p>
             </section>
-            <div class="sso-actions"><p id="ssoConfigStatus" role="status" aria-live="polite"></p><div class="actions"><button id="ssoSave" type="submit" class="btn primary" data-icon="content-save-outline">保存 SSO 配置</button><button id="ssoTest" type="button" class="btn tonal">测试服务连接</button></div></div>
+            <div class="sso-actions"><p id="ssoConfigStatus" class="settings-action-status" role="status" aria-live="polite"></p><div class="actions"><button id="ssoSave" type="submit" class="btn primary" data-icon="content-save-outline">保存 SSO 配置</button><button id="ssoTest" type="button" class="btn tonal">测试服务连接</button></div></div>
           </fieldset>
         </form>
       </section>
@@ -419,7 +422,7 @@ SOFTWARE.
           <p class="hint">原始管理员拥有不可更改的最高权限，名称固定、不出现在用户管理中，凭据单独保存在 data/root_admin.json。这里只能修改密码。</p>
           <label>新密码<input name="password" id="rootNewPassword" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>
           <label>再次输入<input name="confirm" id="rootConfirmPassword" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>
-          <p id="rootPasswordStatus" role="status" aria-live="polite"></p>
+          <p id="rootPasswordStatus" class="settings-action-status" role="status" aria-live="polite"></p>
           <button type="submit" class="btn primary" data-icon="lock-reset">修改密码</button>
         </form>
       </section>

@@ -128,7 +128,8 @@ COLUMNS = {'shifts': {'special': 'INTEGER NOT NULL DEFAULT 0'},
                                'sso_id': "VARCHAR(64) NOT NULL DEFAULT ''",
                                'sso_auto_link_blocked': 'TINYINT NOT NULL DEFAULT 0'},
            'login_sessions': {'sso_identity': "VARCHAR(64) NOT NULL DEFAULT ''", 'last_response': 'DOUBLE NOT NULL DEFAULT 0'},
-           'attendance': {'status_override': "VARCHAR(16) NOT NULL DEFAULT ''"},
+           'attendance': {'status_override': "VARCHAR(16) NOT NULL DEFAULT ''", 'final_status': "VARCHAR(16) NOT NULL DEFAULT ''"},
+           'attendance_history': {'final_status': "VARCHAR(16) NOT NULL DEFAULT ''"},
            'field_duty': {'manual': 'TINYINT NOT NULL DEFAULT 0', 'status': 'TINYINT NOT NULL DEFAULT 2'}}
 
 

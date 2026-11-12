@@ -10,7 +10,7 @@ import re
 from zoneinfo import ZoneInfo
 
 from pypinyin import lazy_pinyin
-from server import admin_store, db, duty_settings, mailer, overview, schedule_store
+from server import admin_store, db, duty_settings, mailer, overview, schedule_store, system_clock
 
 TZ = ZoneInfo('Asia/Shanghai')
 KEY = 'attendance_push'
@@ -137,6 +137,7 @@ def period(weeks, end=None, now=None):
 
 def _events(start, end, cutoff):
     rules = duty_settings.load()
+    schedule_store.finalize_absences(min(cutoff, system_clock.now()))
     events, seen = [], set()
     with db.read() as conn:
         schedule_store.init(conn)
@@ -151,22 +152,24 @@ def _events(start, end, cutoff):
                 if checked:
                     at = datetime.fromisoformat(checked)
                     if at.tzinfo is None: at = at.replace(tzinfo=TZ)
-                    if at > cutoff: member = {**member, 'checked_at': None}
-                seen.add((shift['day'], shift['start'], member['name'], checked))
+                    if at > cutoff: member = {**member, 'checked_at': None, 'final_status': ''}
+                seen.add((shift['day'], shift['start'], member['name'], checked or ''))
                 status = overview.member_status(shift, member, cutoff, rules)
                 if status in LABELS:
                     events.append({'name': member['name'], 'kind': status, 'day': shift['day'],
                                    'at': shift['day'] + ' ' + shift['start']})
-        for record in conn.execute('SELECT day,start,end,name,checked_at FROM attendance_history WHERE day>=? AND day<=?',
+        for record in conn.execute('SELECT day,start,end,name,checked_at,final_status FROM attendance_history WHERE day>=? AND day<=?',
                                    (start.isoformat(), end.isoformat())):
             record = dict(record)
-            if (record['day'], record['start'], record['name'], record['checked_at']) in seen:
+            if (record['day'], record['start'], record['name'], record['checked_at'] or '') in seen:
                 continue
             if schedule_store.shift_bounds(record)[0] > cutoff:
                 continue
-            checked = datetime.fromisoformat(record['checked_at'])
-            if checked.tzinfo is None: checked = checked.replace(tzinfo=TZ)
-            status = overview.member_status(record, {'checked_at': record['checked_at'] if checked <= cutoff else None}, cutoff, rules)
+            checked = datetime.fromisoformat(record['checked_at']) if record['checked_at'] else None
+            if checked and checked.tzinfo is None: checked = checked.replace(tzinfo=TZ)
+            if checked and checked > cutoff:
+                continue
+            status = overview.member_status(record, record, cutoff, rules)
             if status in LABELS:
                 events.append({'name': record['name'], 'kind': status, 'day': record['day'],
                                'at': record['day'] + ' ' + record['start']})

@@ -51,6 +51,15 @@ def _chat_helpers():
     return chat
 
 
+async def _attendance_status_worker():
+    while True:
+        try:
+            schedule_store.finalize_absences()
+        except Exception as exc:
+            print(f'[attendance] 状态确认暂时失败：{type(exc).__name__}')
+        await asyncio.sleep(30)
+
+
 async def _log_rotation_worker():
     """Keep data/logs and the operation log within their size cap.
 
@@ -92,10 +101,11 @@ async def lifespan(_app: FastAPI):
     push_task = asyncio.create_task(push_reports.worker())
     presence_task = asyncio.create_task(session_policy.presence_worker())
     log_task = asyncio.create_task(_log_rotation_worker())
+    attendance_task = asyncio.create_task(_attendance_status_worker())
     try:
         yield
     finally:
-        for task in (push_task, presence_task, log_task):
+        for task in (push_task, presence_task, log_task, attendance_task):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task

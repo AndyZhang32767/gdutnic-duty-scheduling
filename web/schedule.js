@@ -84,7 +84,7 @@ function render(changedIds = null) {
     const members=el('div','members');
     for(const m of s.members){
       // Checked members always read "已签到"; only the colour reflects late/absent.
-      const label = m.checked_at ? '已签到' : m.status==='absent' ? '旷班' : '待签到';
+      const label = m.status === 'unconfirmed' ? '已签到（待确认）' : m.checked_at ? '已签到' : m.status==='absent' ? '旷班' : '待签到';
       const tone = m.status ? ' '+m.status : '';
       const n=el('span','member'+tone+(m.checked_at?' checked':''),m.name+' · '+label);
       if(m.checked_at)n.title=new Date(m.checked_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});
@@ -140,7 +140,7 @@ function render(changedIds = null) {
 }
 function openEditor(s){editing=s?s.id:null;editingSpecial=null;const f=$('shiftForm');f.reset();$('formStatus').textContent='';$('editorTitle').textContent=s?'编辑班次':'新增班次';for(const key of ['day','start','end','note'])f.elements[key].value=s?s[key]:(key==='day'?dayInput().value:'');f.elements.members.value=s?s.members.map(m=>m.name).join('\n'):'';$('editor').showModal();}
 if($('day')){$('day').value=today();$('day').onchange=load;}if(admin){
-  $('add').onclick=()=>openEditor(null);$('closeEditor').onclick=()=>$('editor').close();
+  $('closeEditor').onclick=()=>$('editor').close();
   $('shiftForm').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,b=f.querySelector('[type=submit]');const body=Object.fromEntries(new FormData(f));body.members=body.members.split(/[\n,，、]+/).map(n=>n.trim()).filter(Boolean);b.disabled=true;try{
   if(editingSpecial!==null){const saved=editingSpecial;await api('/api/admin/special-schedules'+(editingSpecial?'/'+editingSpecial:''),editingSpecial?'PUT':'POST',body);$('editor').close();await loadSpecials();$('specialStatus').textContent=saved?'特殊排班已更新。':'特殊排班已添加。';}
   else{await api('/api/admin/schedules'+(editing?'/'+editing:''),editing?'PUT':'POST',body);if($('day'))$('day').value=body.day;$('editor').close();await load();}
