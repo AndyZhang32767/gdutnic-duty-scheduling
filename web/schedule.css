@@ -227,7 +227,7 @@ dialog::backdrop{background:rgba(25,28,30,.4)}
 .animated-button:hover svg { fill: var(--schedule-primary, #1f387e); }
 .animated-button:active {
   scale: 0.95;
-  box-shadow: 0 0 0 4px var(--schedule-warning, #f5c518);
+  box-shadow: 0 0 0 4px var(--schedule-warning-outline, #f5c518);
 }
 /* State 0 (点击登记): hovering previews the pending yellow. */
 .animated-button:hover .circle { width: 220px; height: 220px; opacity: 1; background-color: var(--schedule-warning-container, #ffe9a8); }
