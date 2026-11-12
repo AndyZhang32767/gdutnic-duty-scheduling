@@ -1867,6 +1867,14 @@ from server import keycloak
 app.include_router(keycloak.router)
 
 
+@app.get("/api/admin/about")
+async def admin_about(request: Request):
+    if not _session_account(request):
+        raise HTTPException(status_code=401, detail="请先登录管理员")
+    from server.app_version import current_version
+    return {"version": current_version(ROOT)}
+
+
 @app.get("/{slug}")
 async def admin_page(slug: str, request: Request):
     if len(slug) != 8 or slug != admin_store.path():

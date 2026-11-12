@@ -86,7 +86,7 @@ gdutnic-outline-assistant/
 │   ├── range-clear.js      整周排班 / 整月外勤的删除确认
 │   ├── data-admin.js       数据管理：预览、编辑、删除数据库记录
 │   ├── keycloak-bind.html  首次 SSO 绑定页（输入本地账号密码）
-│   ├── auth-background.js  登录页 3D 背景
+│   ├── auth-background.js  登录页轻量 CSS 渐变背景显隐控制
 │   └── styles.css / schedule.css / auth-background.css  Material You 样式
 ├── sql/mysql_schema.sql    MySQL 建表语句
 ├── tests/                  Python 与 Node 测试
@@ -104,6 +104,16 @@ gdutnic-outline-assistant/
 ├── start.sh / start.bat    启动脚本
 └── compose.yaml            本地 MySQL 8.4
 ```
+
+### 浅色与深色主题
+
+管理端和用户端导航栏「网络服务协会」右侧提供仅含图标的太阳／月亮主题按钮，图标表示当前模式。首次访问时跟随系统主题，系统主题变化也会同步；手动切换后优先使用保存在浏览器中的选择，两端及同源标签页共享。深色主题使用 Material 3 蓝青色配色，按钮 SVG 图标跟随前景色，协会 Logo 在深色下显示为浅色。主题由 `web/theme.js` 和 `web/theme.css` 统一管理，最低兼容目标为 Chromium / Edge 134。
+
+### 登录背景浏览器兼容
+
+登录背景以 Chromium / Edge 134 为最低兼容目标，使用 CSS 径向渐变与 `transform` 动画；JavaScript 只同步登录框和页面可见状态。系统开启「减少动态效果」时显示静态渐变。
+
+已在 macOS ARM64 的 Chrome for Testing 134.0.6998.165、1280×720（DPR 1）可见窗口验证渐变、动画、登录框显隐及减少动态效果。三轮各 5 秒的 `requestAnimationFrame` 采样平均分别为 101.85、119.98、120.00 FPS；第一轮存在 4 个超过 20ms 的间隔。该指标反映浏览器回调节奏，不等于合成器实际呈现帧数，也不替代 Windows Edge 134 实机验收。
 
 ## 项目各部分使用方法
 
@@ -431,3 +441,5 @@ git push origin master
 ## 开源协议
 
 本项目采用 [MIT License](LICENSE)。
+
+管理员导航「其他设置」下方的「关于」展示部署版本、GitHub 仓库、Issues 上报入口、联系邮箱及 MIT 许可。版本优先读取 `APP_VERSION` 环境变量，其次读取根目录 `VERSION` 文件，再使用 Git 描述（包含未提交修改标记）；源码包应在发布时提供版本信息。
