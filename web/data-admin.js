@@ -149,23 +149,27 @@ async function loadDataTables() {
   return data.items;
 }
 
+function dataShowError(message) {
+  const tr = el('tr'), td = el('td', 'data-empty', message);
+  td.setAttribute('role', 'alert');
+  tr.append(td);
+  $('dataHead').replaceChildren();
+  $('dataRows').replaceChildren(tr);
+}
+
 async function loadDataPreview({keepSelection = false} = {}) {
   if (!dataTable) return;
   if (!keepSelection) dataResetSelection();
-  $('dataStatus').textContent = '正在读取…';
   try {
     const params = new URLSearchParams({page: String(dataPageNo), size: '50'});
     const query = $('dataSearch').value.trim();
     if (query) params.set('q', query);
     dataPreview = await api(`/api/admin/data/tables/${encodeURIComponent(dataTable)}?${params}`);
     renderDataPreview();
-    $('dataStatus').textContent = '';
   } catch (err) {
     dataPreview = null;
     dataResetSelection();
-    $('dataHead').replaceChildren();
-    $('dataRows').replaceChildren();
-    $('dataStatus').textContent = err.message;
+    dataShowError(err.message);
     dataSyncSelectionUI();
   }
 }
@@ -226,7 +230,6 @@ $('dataEditForm').onsubmit = async e => {
     $('dataEditDialog').close();
     await loadDataTables();
     await loadDataPreview();
-    $('dataStatus').textContent = '已保存修改。';
   } catch (err) {
     $('dataEditStatus').textContent = err.message;
   } finally {
@@ -257,7 +260,6 @@ $('dataDeleteForm').onsubmit = async e => {
     $('dataDeleteDialog').close();
     await loadDataTables();
     await loadDataPreview();
-    $('dataStatus').textContent = '已删除 1 行。';
   } catch (err) {
     $('dataDeleteStatus').textContent = err.message;
   } finally {
@@ -271,7 +273,7 @@ $('dataTab').onclick = async () => {
     try {
       const tables = await loadDataTables();
       if (tables.length) await selectDataTable(tables[0].name);
-    } catch (err) { $('dataStatus').textContent = err.message; }
+    } catch (err) { dataShowError(err.message); }
   } else {
     await loadDataTables();
     await loadDataPreview();
@@ -296,7 +298,6 @@ $('dataClearPage').onclick = () => {
     onDone: async () => {
       await loadDataTables();
       await loadDataPreview();
-      $('dataStatus').textContent = '已清除当前页。';
     },
   });
 };
@@ -316,7 +317,6 @@ $('dataClearSelected').onclick = () => {
     onDone: async () => {
       await loadDataTables();
       await loadDataPreview();
-      $('dataStatus').textContent = '已清除选中的记录。';
     },
   });
 };

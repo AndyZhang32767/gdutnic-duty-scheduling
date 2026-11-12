@@ -22,6 +22,8 @@
   --md-surface: #0F1417;
   --md-surface-low: #171C1F;
   --md-surface-high: #262B2D;
+  /* Segmented list items: the page surface, a little lighter. */
+  --md-list-item: #1E2428;
   --md-on-surface: #DEE3E6;
   --md-on-surface-variant: #C0C8CC;
   --md-outline: #8A9296;
@@ -57,11 +59,13 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 36px;
-  min-height: 40px;
+  width: 36px;
+  height: 36px;
+  min-height: 0;
   margin-left: auto;
-  padding: 4px;
+  padding: 0;
   border: 0;
-  border-radius: 12px;
+  border-radius: 50%;
   background: transparent;
   color: var(--md-primary);
   font: inherit;
@@ -102,3 +106,199 @@
 [data-theme="dark"] .shift-timeline [fill="#932b37"],
 [data-theme="dark"] .shift-timeline [fill="#c62828"] { fill: var(--md-error); }
 [data-theme="dark"] .shift-timeline [fill="#b98100"] { fill: var(--schedule-warning); }
+:root[data-theme="dark"] select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23C0C8CC' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 6l4.5 4.5L12.5 6'/%3E%3C/svg%3E") !important; }
+[data-theme="dark"] .md-select-menu { box-shadow: 0 0 0 1px var(--md-outline-variant), 0 8px 22.4px rgba(0, 0, 0, .45); }
+
+/* Light-mode cards follow Material 3 (m3.material.io/components/cards): top-level cards are
+   Elevated (level 1 shadow, no outline); a card inside a card is Filled or Outlined, never elevated. */
+:root:not([data-theme="dark"]) {
+  --md-card-elevation: 0 1px 2px rgba(0, 0, 0, .3), 0 1px 3px 1px rgba(0, 0, 0, .15);
+  --md-card-filled: #E3E9ED;
+  --md-card-outline: #C3CDD2;
+  /* Segmented list items: white on the off-white page surface. */
+  --md-list-item: #FFFFFF;
+}
+:root:not([data-theme="dark"]) :is(.card, .about-panel, .log-table-wrap, .data-table-wrap, .weekly-table-wrap, .push-window) {
+  background: var(--md-surface-high);
+  border: 0;
+  box-shadow: var(--md-card-elevation);
+}
+/* Outlined: nested containers that hold form controls or a document preview. */
+:root:not([data-theme="dark"]) :is(.card, .about-panel) :is(.card, .push-window, .weekly-slot) {
+  background: var(--md-surface-high);
+  border: 1px solid var(--md-card-outline);
+  box-shadow: none;
+}
+/* Filled: nested read-only content blocks. */
+:root:not([data-theme="dark"]) :is(.card, .about-panel) :is(.swap-side, .push-section) {
+  background: var(--md-card-filled);
+  border: 0;
+  box-shadow: none;
+}
+
+/* Dark-mode cards are Material 3 Outlined: surface fill, 1px outline-variant, no shadow.
+   Re-pointing surface-high inside the card keeps floating-label masks matched to the new fill. */
+[data-theme="dark"] :is(.card, .about-panel, .log-table-wrap, .data-table-wrap, .weekly-table-wrap, .push-window) {
+  --md-surface-high: var(--md-surface);
+  --schedule-surface-high: var(--md-surface);
+  background: var(--md-surface);
+  border: 1px solid var(--md-outline-variant);
+  box-shadow: none;
+}
+
+/* Material 3 checkbox (m3.material.io/components/checkbox): 18px container, 2px corners, 2px outline,
+   40px circular state layer. Selecting fills the container, then the mark is drawn left to right.
+   Switches and the filter-chip icons keep their own look. */
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input) {
+  -webkit-appearance: none; appearance: none;
+  position: relative; box-sizing: border-box; flex: 0 0 18px;
+  width: 18px; height: 18px; min-width: 0; min-height: 0; padding: 0;
+  border: 2px solid var(--md-on-surface-variant); border-radius: 2px;
+  background: transparent; outline: 0; cursor: pointer;
+  transition: background-color 150ms cubic-bezier(.2, 0, 0, 1), border-color 150ms cubic-bezier(.2, 0, 0, 1);
+}
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input)::before {
+  content: ""; position: absolute; inset: -13px; border-radius: 50%;
+  background: var(--md-on-surface); opacity: 0; pointer-events: none;
+  transition: opacity 150ms linear;
+}
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input)::after {
+  content: ""; position: absolute; inset: -2px;
+  background: var(--md-on-primary);
+  --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M4 9.4l3.4 3.4L14 5.8' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E");
+  -webkit-mask: var(--check-mark) center / contain no-repeat; mask: var(--check-mark) center / contain no-repeat;
+  clip-path: inset(0 100% 0 0); opacity: 0;
+  transition: opacity 100ms linear, clip-path 0s 100ms;
+}
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):is(:checked, :indeterminate) {
+  background: var(--md-primary); border-color: var(--md-primary);
+}
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):is(:checked, :indeterminate)::before { background: var(--md-primary); }
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):is(:checked, :indeterminate)::after {
+  clip-path: inset(0); opacity: 1;
+  transition: clip-path 200ms cubic-bezier(.2, 0, 0, 1) 80ms, opacity 0s 80ms;
+}
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):indeterminate::after {
+  --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M4.5 9h9' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E");
+}
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):hover:not(:checked, :indeterminate, :disabled) { border-color: var(--md-on-surface); }
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):hover::before { opacity: .08; }
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):is(:focus-visible, :active)::before { opacity: .12; }
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):disabled { opacity: .38; cursor: default; }
+:root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input):disabled::before { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input),
+  :root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input)::before,
+  :root input[type=checkbox]:not([role=switch], .md-switch input, .push-column input)::after { transition: none; }
+}
+
+/* Wiki containers nested inside the about panel use outlined white surfaces. */
+:root:not([data-theme="dark"]) #wikiPanel :is(.wiki-tile, .wiki-page, .wiki-feature-list) {
+  background: #FFFFFF;
+  border: 1px solid var(--md-card-outline);
+  box-shadow: none;
+}
+:root:not([data-theme="dark"]) #wikiPanel :is(.wiki-feature, .wiki-note) {
+  background: #FFFFFF;
+}
+
+/* Daily scheduling: elevated outer card and outlined nested cards. */
+:root:not([data-theme="dark"]) .card.weekly-config {
+  background: #FFFFFF;
+  border: 0;
+  box-shadow: var(--md-card-elevation);
+}
+:root:not([data-theme="dark"]) .weekly-config .weekly-slot {
+  background: #FFFFFF;
+  border: 1px solid var(--md-card-outline);
+  box-shadow: none;
+}
+[data-theme="dark"] .weekly-config .weekly-slot {
+  background: var(--md-surface);
+  border: 1px solid var(--md-outline-variant);
+  box-shadow: none;
+}
+
+/* Material 3 outlined text fields. Native pickers and form semantics are preserved. */
+:root body :is(input, textarea, select):not([type=checkbox], [type=radio], [type=range], [type=file], [type=hidden], [type=submit], [type=button], [type=color]) {
+  box-sizing: border-box;
+  border: 1px solid var(--md-outline);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--md-on-surface);
+  padding: 12px 16px;
+  font-size: 16px;
+  line-height: 24px;
+  outline: none;
+  box-shadow: none;
+}
+:root body :is(input, select):not([type=checkbox], [type=radio], [type=range], [type=file], [type=hidden], [type=submit], [type=button], [type=color]) { height: 56px; min-height: 56px; }
+:root body textarea { min-height: 96px; resize: vertical; }
+:root body select:not([multiple]) { padding-right: calc(var(--select-chevron-inset) + 24px); }
+:root body :is(input, textarea, select):not(:disabled):hover { border-color: var(--md-on-surface); }
+:root body :is(input, textarea, select):not([type=checkbox], [type=radio], [type=range], [type=file], [type=hidden]):focus {
+  border-color: var(--md-primary);
+  outline: 1px solid var(--md-primary);
+  outline-offset: -2px;
+  background: transparent;
+}
+:root body :is(input, textarea, select)[aria-invalid=true] { border-color: var(--md-error); }
+:root body :is(input, textarea, select):disabled { opacity: .38; }
+:root body .m3-outlined-label { position: relative; display: block; padding: 0; }
+:root body .m3-outlined-label > :is(input, textarea, select) { display: block; width: 100%; margin: 0; }
+:root body .m3-field-caption {
+  position: absolute; z-index: 1; top: 28px; left: 12px;
+  max-width: calc(100% - 24px); padding: 0 4px;
+  transform: translateY(-50%); font-size: 16px; line-height: 24px;
+  background: transparent; color: var(--md-on-surface-variant);
+  pointer-events: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  transition: top 150ms ease, font-size 150ms ease, color 150ms ease;
+}
+:root body .m3-outlined-label:focus-within > .m3-field-caption { color: var(--md-primary); }
+:root body .outlined-field > span {
+  left: 12px; top: 28px; padding: 0 4px; font-size: 16px;
+}
+:root body .outlined-field input:focus + span,
+:root body .outlined-field input:not(:placeholder-shown) + span,
+:root body .outlined-field input:-webkit-autofill + span {
+  transform: translateY(-50%) translateY(-28px) scale(.75);
+  background: var(--md-surface-high);
+}
+:root body .outlined-field.password-field input { padding-right: 52px; }
+:root body .outlined-field > select + span {
+  top: 0;
+  transform: translateY(-50%) scale(.75);
+  background: var(--md-surface-high);
+}
+:root body .outlined-field > select:focus + span { color: var(--md-primary); }
+
+/* Rest inside an empty field, then float on focus or when it has a value. */
+:root body .m3-outlined-label:focus-within > .m3-field-caption,
+:root body .m3-outlined-label:has(> input:not(:placeholder-shown)) > .m3-field-caption,
+:root body .m3-outlined-label:has(> textarea:not(:placeholder-shown)) > .m3-field-caption,
+:root body .m3-outlined-label:has(> select option:checked:not([value=""])) > .m3-field-caption {
+  top: 0; font-size: 12px; line-height: 16px; background: var(--md-surface-high);
+}
+:root body .m3-outlined-label:not(:focus-within) > :is(input, textarea)::placeholder { color: transparent; }
+:root body .outlined-field > select + span {
+  top: 28px; transform: translateY(-50%); background: transparent;
+}
+:root body .outlined-field:focus-within > select + span,
+:root body .outlined-field:has(> select option:checked:not([value=""])) > select + span {
+  top: 0; transform: translateY(-50%) scale(.75); background: var(--md-surface-high);
+}
+@media(prefers-reduced-motion:reduce) {
+  :root body .m3-field-caption { transition: none; }
+}
+
+:root:not([data-theme="dark"]) #fieldBoard .field-person {
+  border: 2px solid currentColor;
+  box-shadow: none;
+}
+:root:not([data-theme="dark"]) #fieldBoard .field-person.done {
+  background: var(--schedule-primary-container, #cfe7fb);
+}
+:root:not([data-theme="dark"]) #fieldBoard .field-person.missing {
+  background: var(--schedule-error-container, #ffdcdc);
+}
