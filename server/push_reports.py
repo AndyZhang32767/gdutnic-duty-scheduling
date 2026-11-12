@@ -227,29 +227,43 @@ def report(config, end=None, now=None, sample=False):
             'sections': sections, 'labels': COLUMNS}
 
 
+# Inline styles are the light fallback; clients that ignore this block stay light.
+EMAIL_DARK_STYLE = ('<style>:root{color-scheme:light dark}'
+                    '@media (prefers-color-scheme:dark){'
+                    '.page{background:#0f1417!important;color:#dee3e6!important}'
+                    '.sheet{background:#262b2d!important;color:#dee3e6!important}'
+                    '.accent{color:#8ad0ee!important}'
+                    '.head{background:#354a53!important;color:#cfe6f2!important}'
+                    '.cell{border-bottom-color:#40484c!important}'
+                    '}</style>')
+
+
 def render_email(data):
     plain = [data['opening'], '']
     content = [f'<p style="white-space:pre-wrap">{escape(data["opening"])}</p>']
     for kind, section in data['sections'].items():
         if not section['enabled']: continue
         plain.append(LABELS[kind])
-        content.append(f'<h2 style="font-size:18px;color:#186078">{LABELS[kind]}</h2>')
+        content.append(f'<h2 class="accent" style="font-size:18px;color:#186078">{LABELS[kind]}</h2>')
         if not section['rows']:
             message = f'本周期无{LABELS[kind]}记录'
             plain.extend([message, '']); content.append('<p>' + message + '</p>'); continue
         plain.append('\t'.join(COLUMNS[key] for key in section['columns']))
         content.append('<table style="width:100%;border-collapse:collapse;text-align:left"><thead><tr>')
         for key in section['columns']:
-            content.append(f'<th style="padding:10px;background:#d0e6f2">{COLUMNS[key]}</th>')
+            content.append(f'<th class="head" style="padding:10px;background:#d0e6f2;color:#191c1e">{COLUMNS[key]}</th>')
         content.append('</tr></thead><tbody>')
         for cells in section['rows']:
             plain.append('\t'.join(str(cell) for cell in cells))
-            content.append('<tr>' + ''.join(f'<td style="padding:8px 10px;border-bottom:1px solid #eef3f7;vertical-align:top">{escape(str(cell))}</td>' for cell in cells) + '</tr>')
+            content.append('<tr>' + ''.join(f'<td class="cell" style="padding:8px 10px;border-bottom:1px solid #eef3f7;vertical-align:top">{escape(str(cell))}</td>' for cell in cells) + '</tr>')
         plain.append(''); content.append('</tbody></table>')
     plain.append(data['closing'])
     content.append(f'<p style="white-space:pre-wrap">{escape(data["closing"])}</p>')
-    html = ('<!doctype html><html lang="zh-CN"><body style="font-family:Arial,sans-serif;color:#191c1e;background:#f6f9fc;padding:20px">'
-            '<main style="max-width:900px;margin:auto;background:white;padding:24px;border-radius:20px">'
+    html = ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">'
+            + EMAIL_DARK_STYLE +
+            '</head><body class="page" style="font-family:Arial,sans-serif;color:#191c1e;background:#f6f9fc;padding:20px">'
+            '<main class="sheet" style="max-width:900px;margin:auto;background:#ffffff;color:#191c1e;padding:24px;border-radius:20px">'
             f'<h1 style="font-size:22px">{escape(data["title"])}</h1>' + ''.join(content) + '</main></body></html>')
     return '\n'.join(plain), html
 

@@ -183,13 +183,18 @@ SOFTWARE.
       <section id="specialPage" hidden>
         <div class="hero">
           <div><h1 data-icon="calendar-clock-outline">特殊排班</h1><p>单独添加临时班次，可一次安排多位值班人员，保存后可按日期查看并修改。</p></div>
-          <button id="addSpecial" class="btn primary" data-icon="plus">新增特殊排班</button>
         </div>
-        <div class="stats">
-          <div data-icon="calendar-clock-outline" class="stat-with-icon"><strong id="specialCount">0</strong><span>个未来特殊班次</span></div>
-          <div data-icon="account-group-outline" class="stat-with-icon"><strong id="specialPeople">0</strong><span>人次排班</span></div>
+        <div class="special-summary-row">
+          <div class="stats">
+            <div data-icon="calendar-clock-outline" class="stat-with-icon"><strong id="specialCount">0</strong><span>个未来特殊班次</span></div>
+            <div data-icon="account-group-outline" class="stat-with-icon"><strong id="specialPeople">0</strong><span>人次排班</span></div>
+          </div>
+          <div class="special-summary-actions">
+            <button id="addSpecial" class="btn primary" data-icon="plus">新增特殊排班</button>
+            <button id="refreshSpecial" class="btn tonal" data-icon="refresh">刷新</button>
+          </div>
         </div>
-        <div class="section-head"><h2 data-icon="calendar-clock-outline">未来特殊排班</h2><div><button id="refreshSpecial" class="btn tonal" data-icon="refresh">刷新</button></div></div>
+        <div class="section-head"><h2 data-icon="calendar-clock-outline">未来特殊排班</h2></div>
         <p id="specialStatus" role="status" aria-live="polite"></p>
         <section id="specialList" class="shifts"></section>
       </section>
@@ -197,6 +202,8 @@ SOFTWARE.
       <section id="swapPage" hidden>
         <div class="hero">
           <div><h1 data-icon="swap-horizontal">调换值班</h1><p>两位值班人员互换各自的一个班次，需双方协商同意。班次开始后无法再删除，双方都完成签到后记录自动消失。</p></div>
+        </div>
+        <div class="page-actions">
           <button id="addSwap" class="btn primary" data-icon="plus">添加调班</button>
         </div>
         <p id="swapStatus" role="status" aria-live="polite"></p>
@@ -204,7 +211,10 @@ SOFTWARE.
       </section>
 
       <section id="pushPage" hidden>
-        <div class="hero"><div><h1 data-icon="email-outline">消息推送</h1><p>让每个完整周期的考勤情况，按时抵达收件箱。</p></div><button id="pushSave" class="btn primary" data-icon="content-save-outline">保存推送设置</button></div>
+        <div class="hero"><div><h1 data-icon="email-outline">消息推送</h1><p>让每个完整周期的考勤情况，按时抵达收件箱。</p></div></div>
+        <div class="page-actions">
+          <button id="pushSave" class="btn primary" data-icon="content-save-outline">保存推送设置</button>
+        </div>
         <div class="card push-settings">
           <div class="section-head"><h2>发送计划</h2><label class="push-switch"><input id="pushEnabled" type="checkbox"><span>启用定时推送</span></label></div>
           <label for="pushAddress">目标邮箱</label>
@@ -232,6 +242,8 @@ SOFTWARE.
       <section id="permissionGroupsPage" hidden>
         <div class="hero">
           <div><h1 data-icon="shield-account-outline">权限组管理</h1><p>以权限组统一管理访问范围。展开权限组，选择成员可以访问的页面。</p></div>
+        </div>
+        <div class="page-actions">
           <button id="addPermissionGroup" class="btn primary" data-icon="plus">新建权限组</button>
         </div>
         <p id="permissionGroupsStatus" role="status" aria-live="polite"></p>
@@ -241,8 +253,10 @@ SOFTWARE.
       <section id="membersPage" hidden>
         <div class="hero">
           <div><h1 data-icon="account-group-outline">用户管理</h1><p>按权限组管理账号。新账号默认加入会员组，初始密码为 gg2017。</p></div>
-          <div class="hero-actions">
-            <label class="member-search" data-icon="magnify"><input id="memberSearch" type="search" placeholder="搜索姓名" autocomplete="off" aria-label="搜索用户"></label>
+        </div>
+        <div class="members-toolbar">
+          <label class="member-search" data-icon="magnify"><input id="memberSearch" type="search" placeholder="搜索姓名" autocomplete="off" aria-label="搜索用户"></label>
+          <div class="members-toolbar-actions">
             <button id="addMember" class="btn primary" data-icon="account-plus-outline">添加账号</button>
             <button id="cleanupMembers" class="btn danger" data-icon="account-off-outline">清理多余用户</button>
           </div>
@@ -448,7 +462,6 @@ SOFTWARE.
               <label class="member-search" data-icon="magnify"><input id="dataSearch" type="search" placeholder="在表中搜索" autocomplete="off" aria-label="搜索当前表"></label>
               <button id="dataRefresh" class="btn tonal" type="button" data-icon="refresh">刷新</button>
             </div>
-            <p id="dataStatus" role="status" aria-live="polite"></p>
             <div class="data-table-wrap">
               <table class="data-table">
                 <thead id="dataHead"></thead>
@@ -549,14 +562,14 @@ SOFTWARE.
 
       <dialog id="swapDialog">
         <form id="swapForm">
-          <div class="section-head"><h2>添加调班</h2><button type="button" id="closeSwap" class="btn tonal" data-icon="close">关闭</button></div>
+          <div class="section-head"><h2>添加调班</h2><button type="button" id="closeSwap" class="btn danger" data-icon="close">关闭</button></div>
           <p class="hint">先选择两位人员，再分别选择他们各自的班次。</p>
           <div class="swap-picker">
-            <label>甲方<select id="swapPersonA" required><option value="">选择人员</option></select></label>
+            <label>甲方<select id="swapPersonA" required data-search="搜索人员名称"><option value="">选择人员</option></select></label>
             <label>甲方班次<select id="swapShiftA" required disabled><option value="">请先选择人员</option></select></label>
           </div>
           <div class="swap-picker">
-            <label>乙方<select id="swapPersonB" required><option value="">选择人员</option></select></label>
+            <label>乙方<select id="swapPersonB" required data-search="搜索人员名称"><option value="">选择人员</option></select></label>
             <label>乙方班次<select id="swapShiftB" required disabled><option value="">请先选择人员</option></select></label>
           </div>
           <label class="review-check"><input id="swapConfirmed" type="checkbox"><span>双方已协商完成并同意调班</span></label>
@@ -589,6 +602,7 @@ SOFTWARE.
 </div>
 <script src="/static/password-visibility.js"></script><script src="/static/animated-button.js"></script>
 <script src="/static/ripple.js"></script>
+<script src="/static/md-select.js"></script>
 <script src="/static/shift-timeline.js"></script>
 <script src="/static/checkin-window.js"></script>
 <script src="/static/schedule.js"></script>
