@@ -3,14 +3,18 @@
 网络服务协会的值班排班与签到系统。普通成员用姓名和密码（或 GDUTNIC 单点登录）登录，在概览里查看自己的排班、签到并登记外勤；管理员在管理端维护每日/每周/特殊排班、账号权限、外勤登记与考勤统计，并可限制打卡只能在校内网络完成。界面采用 Material You 风格，支持浅色与深色模式、跟随系统主题。
 
 
-## 一行部署
+## 快速部署指令
 
-前提：已下载本项目，安装 Python 3.10+（含 `venv`）和带 Compose 插件的 Docker，并启动 Docker 服务。下面命令均在项目根目录执行。
+前置：已下载本项目，安装 Python 3.10+（含 `venv`）和带 Compose 插件的 Docker，启动 Docker 服务。在项目根目录执行下方指令
 
 **Linux / macOS：**
 
 ```bash
 python3 -m server.init_data && docker compose --env-file data/.env up -d --wait mysql && bash start.sh
+```
+后续快速启动
+```bash
+bash start.sh
 ```
 
 **Windows（CMD）：**
@@ -18,6 +22,11 @@ python3 -m server.init_data && docker compose --env-file data/.env up -d --wait 
 ```bat
 python -m server.init_data && docker compose --env-file data/.env up -d --wait mysql && start.bat
 ```
+后续快速启动
+
+运行start.bat
+
+# 第一次启动请务必从控制台启动
 
 命令会初始化 `data/`、生成随机数据库密码、启动并等待 MySQL 就绪，再创建 `.venv`、安装依赖并启动应用。任一步骤失败都会停止后续步骤。重复执行保留现有数据库、配置和已修改的用户密码；更新代码前先停止正在运行的应用。
 
