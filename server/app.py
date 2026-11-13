@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import Response, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.middleware.sessions import SessionMiddleware
@@ -373,34 +373,25 @@ async def admin_login(request: Request) -> JSONResponse:
     if ADMIN_LIMITER.blocked(key):
         raise HTTPException(status_code=429, detail="管理员登录尝试过于频繁，请在限制开始 10 分钟后重试")
     body = await request.json()
-    username = str(body.get("username") or "").strip()
+    login_name = str(body.get("username") or "").strip()
     password = str(body.get("password") or "")
+    username = member_store.resolve_login_name(login_name)
     account_key = "admin:" + username.casefold()
     if ACCOUNT_LIMITER.blocked(account_key):
         raise HTTPException(status_code=429, detail="管理员登录尝试过于频繁，请在限制开始 10 分钟后重试")
     # The 原始管理员 authenticates against its own file, never the account table.
-    if root_admin.is_root(username):
-        if not root_admin.verify(password):
-            ADMIN_LIMITER.fail(key)
-            ACCOUNT_LIMITER.fail(account_key)
-            raise HTTPException(status_code=401, detail="用户名或密码不正确")
-        ADMIN_LIMITER.reset(key)
-        ACCOUNT_LIMITER.reset(account_key)
-        _log(username, '登录管理端')
-        request.session["admin_ok"] = True
-        request.session["admin_username"] = username
-        request.session["admin_version"] = member_store.session_version(username)
-        request.session["admin_sid"] = session_policy.create("admin", username)
-        response = JSONResponse({"ok": True, "username": username})
-        _set_admin_cookie(response, username, request.session["admin_sid"])
-        return response
-    version = member_store.authenticate(username, password)
+    is_root = root_admin.is_root(login_name)
+    if is_root:
+        version = root_admin.session_version() if root_admin.verify(password) else None
+    else:
+        account = member_store.authenticate_login(login_name, password)
+        username, version = account if account else (username, None)
     if not version:
         ADMIN_LIMITER.fail(key)
         ACCOUNT_LIMITER.fail(account_key)
         raise HTTPException(status_code=401, detail="用户名或密码不正确")
     # Administrator pages are open to any account with at least one admin permission.
-    if not permissions.is_admin(username):
+    if not is_root and not permissions.is_admin(username):
         ADMIN_LIMITER.fail(key)
         ACCOUNT_LIMITER.fail(account_key)
         raise HTTPException(status_code=403, detail="该账号没有管理员权限")
@@ -409,10 +400,10 @@ async def admin_login(request: Request) -> JSONResponse:
     _log(username, '登录管理端')
     request.session["admin_ok"] = True
     request.session["admin_username"] = username
-    request.session["admin_version"] = member_store.session_version(username)
+    request.session["admin_version"] = version
     request.session["admin_sid"] = session_policy.create("admin", username)
     response = JSONResponse({"ok": True, "username": username})
-    _set_admin_cookie(response, username, request.session["admin_sid"])
+    _set_admin_cookie(response, username, request.session["admin_sid"], version=version)
     return response
 
 
@@ -896,13 +887,13 @@ async def member_login(request: Request):
     if MEMBER_LIMITER.blocked(key):
         raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
     body = await request.json()
-    name = str(body.get("username") or "").strip()
-    # The 原始管理员 is an administrator identity only; it must never open a duty session.
-    version = None if root_admin.is_root(name) else member_store.authenticate(
-        name, str(body.get("password") or ""))
-    if not version:
+    login_name = str(body.get("username") or "").strip()
+    # Root is excluded by authenticate_login and cannot open a duty session.
+    account = member_store.authenticate_login(login_name, str(body.get("password") or ""))
+    if not account:
         MEMBER_LIMITER.fail(key)
         raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
+    name, version = account
     MEMBER_LIMITER.reset(key)
     _log(name, '登录值班账号', role='member')
     request.session["member_username"] = name
@@ -1215,6 +1206,63 @@ async def admin_member_permissions(request: Request):
     except (ValueError, LookupError) as exc:
         raise _schedule_error(exc) from exc
     return {"ok": True, "username": name, "group_id": body['group_id'], "permissions": sorted(perms)}
+
+
+@app.get("/api/admin/members/student-ids/export")
+async def export_member_student_ids(request: Request):
+    from server import member_csv
+    _require_permission(request, "members")
+    return Response(member_csv.export_csv(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="student-ids.csv"',
+                             "Cache-Control": "no-store"})
+
+
+@app.post("/api/admin/members/student-ids/import")
+async def import_member_student_ids(request: Request):
+    from server import member_csv
+    actor = _require_permission(request, "members")
+    try:
+        rows = member_csv.parse_csv(await request.body())
+        result = member_csv.apply_rows(
+            [{'username': name, 'student_id': number} for name, number in rows],
+            lambda name: _may_manage(name, actor))
+    except ValueError as exc:
+        raise _schedule_error(exc) from exc
+    _log(actor, '导入学号名单', f"导入 {result['updated']} 个，冲突 {len(result['conflicts'])} 个")
+    return result
+
+
+@app.post("/api/admin/members/student-ids/replace")
+async def replace_member_student_ids(request: Request):
+    from server import member_csv
+    actor = _require_permission(request, "members")
+    body = await request.json()
+    rows = body.get('items') if isinstance(body, dict) else None
+    if (not isinstance(rows, list) or not rows or len(rows) > 10000 or
+            any(not isinstance(row, dict) or any(not isinstance(row.get(key), str)
+                for key in ('username', 'student_id', 'original_id')) for row in rows)):
+        raise HTTPException(400, '替代数据格式不正确')
+    result = member_csv.apply_rows(rows, lambda name: _may_manage(name, actor), replace=True)
+    _log(actor, '替代冲突学号', f"替代 {result['updated']} 个，仍有冲突 {len(result['conflicts'])} 个")
+    return result
+
+
+@app.put("/api/admin/members/student-id")
+async def admin_member_student_id(request: Request):
+    actor = _require_permission(request, "members")
+    body = await request.json()
+    name = str(body.get("username") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="请指定账号")
+    _reject_root(name)
+    if not _may_manage(name, actor):
+        raise HTTPException(status_code=403, detail="操作管理员账号需要权限组管理权限")
+    try:
+        member_store.set_student_id(name, body.get("student_id"))
+        _log(actor, '更改学号', name)
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    return {"ok": True}
 
 
 @app.put("/api/admin/members/password")
