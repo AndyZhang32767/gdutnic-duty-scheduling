@@ -103,12 +103,14 @@ function render(changedIds = null) {
           button.classList.add('is-submitting');
           button.disabled = true;
           try {
+            await playRegistrationAnimation(button);
             await api(`/api/schedules/${s.id}/check-in`,'POST');
             button.classList.add('registered');
             label.textContent = '已签到';
             $('status').textContent = '';
             setTimeout(() => load(), 900);
           } catch (err) {
+            button.classList.remove('registered');
             $('status').textContent = err.message;
             button.disabled = false;
             window.applyNetworkButton?.(button, 'checkin', label);
@@ -133,7 +135,9 @@ function render(changedIds = null) {
       window.syncCheckInButton(submit, submitText, range, window_ms, clockNow());
       submit.classList.toggle('is-locked', submit.disabled);
       form.dataset.shiftId=String(s.id);
-      form.append(submit);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{await api(`/api/schedules/${s.id}/check-in`,'POST');await load();}catch(err){$('status').textContent=err.message;submit.disabled=false;window.applyNetworkButton?.(submit, 'checkin', submitText);}};card.append(form);
+      form.append(submit);
+      form.onsubmit = event => { event.preventDefault(); submit.click(); };
+      card.append(form);
     }
     mountShiftCard(card);
   }

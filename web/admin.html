@@ -113,7 +113,7 @@
             </dl>
           </section>
           <footer class="about-legal">
-            <p>Copyright © 2026 Andy Zhang and<br>广东工业大学网络与信息协会 (GDUTNIC)</p>
+            <p>Copyright © 2026 Andy Zhang and 广东工业大学网络与信息协会 (GDUTNIC)</p>
             <details><summary>MIT License · 查看许可声明</summary><pre class="about-license">MIT License
 
 Copyright (c) 2026 Andy Zhang and 广东工业大学网络与信息协会 (GDUTNIC)
@@ -308,10 +308,12 @@ SOFTWARE.
         </div>
         <p id="logsStatus" role="status" aria-live="polite"></p>
         <div class="log-table-wrap">
-          <table class="log-table">
-            <thead><tr><th scope="col">时间</th><th scope="col">操作账号</th><th scope="col">操作内容</th></tr></thead>
-            <tbody id="logRows"></tbody>
-          </table>
+          <div class="log-table-scroll">
+            <table class="log-table">
+              <thead><tr><th scope="col">时间</th><th scope="col">操作账号</th><th scope="col">操作内容</th></tr></thead>
+              <tbody id="logRows"></tbody>
+            </table>
+          </div>
         </div>
         <div class="data-pager">
           <span class="data-pager-spacer"></span>
@@ -481,10 +483,12 @@ SOFTWARE.
               <button id="dataRefresh" class="btn tonal" type="button" data-icon="refresh">刷新</button>
             </div>
             <div class="data-table-wrap">
-              <table class="data-table">
-                <thead id="dataHead"></thead>
-                <tbody id="dataRows"></tbody>
-              </table>
+              <div class="data-table-scroll">
+                <table class="data-table">
+                  <thead id="dataHead"></thead>
+                  <tbody id="dataRows"></tbody>
+                </table>
+              </div>
             </div>
             <div class="data-pager">
               <button id="dataClearSelected" class="btn danger" type="button" data-icon="delete-outline" hidden>清除选中</button>

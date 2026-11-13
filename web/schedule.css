@@ -56,7 +56,7 @@ h2{font-size:16px;font-weight:600;margin:0}
 .empty h2{margin-bottom:8px}
 label{display:block;font-size:11.2px;color:var(--md-secondary)}
 input,textarea,select{font:inherit;border:0;border-radius:var(--md-radius-lg);padding:11.2px 12.8px;background:var(--md-surface-low);color:var(--md-on-surface);max-width:100%;outline:1.6px solid transparent;transition:outline-color 150ms ease}
-form label:not(.outlined-field) input:not([type=checkbox]):not([type=radio]),form label textarea{display:block;width:100%;margin:6.4px 0 14.4px}
+form label:not(.outlined-field):not(.m3-outlined-label) input:not([type=checkbox]):not([type=radio]),form label:not(.m3-outlined-label) textarea{display:block;width:100%;margin:6.4px 0 14.4px}
 input:focus,textarea:focus,select:focus{outline-color:var(--md-primary)}
 button:disabled{opacity:.5;cursor:default}
 button:focus-visible,a:focus-visible{outline:1.6px solid var(--md-primary);outline-offset:2.4px}
@@ -456,18 +456,15 @@ form .status-options .status-option input[type=radio]:focus-visible{outline:1.6p
   overflow:auto;max-height:60vh;overscroll-behavior:none}
 /* The vertical scrollbar starts below the sticky header: the track is pushed down by the header height and the strip above it is painted in the header colour. */
 .data-table-wrap{--data-head-h:36px;--data-bar:10px}
-/* Mask the lowest visible row at every scroll position, above the rounded edge. */
-.data-table-wrap::after{content:"";display:block;position:sticky;bottom:0;height:36px;
-  margin-top:-36px;background:var(--md-surface-high);z-index:2;pointer-events:auto}
 .data-table th{box-sizing:border-box;height:var(--data-head-h)}
-.data-table-wrap::-webkit-scrollbar{width:var(--data-bar);height:var(--data-bar)}
-.data-table-wrap::-webkit-scrollbar:vertical{--r:var(--md-radius-xl);--c:var(--md-secondary-container);
+:is(.data-table-scroll, .log-table-scroll)::-webkit-scrollbar{width:var(--data-bar);height:var(--data-bar)}
+:is(.data-table-scroll, .log-table-scroll)::-webkit-scrollbar:vertical{--r:var(--md-radius-xl);--c:var(--md-secondary-container);
   /* Scrollbars are not clipped by border-radius, so the strip redraws the card's top-right arc itself. */
   background:radial-gradient(circle at calc(var(--data-bar) - var(--r)) var(--r),var(--c) calc(var(--r) - .5px),transparent var(--r)) top/100% var(--r) no-repeat,
     linear-gradient(var(--c),var(--c)) 0 var(--r)/100% calc(var(--data-head-h) - var(--r)) no-repeat}
-.data-table-wrap::-webkit-scrollbar-track:vertical{margin-top:var(--data-head-h);margin-bottom:calc(var(--md-radius-xl) / 2)}
-.data-table-wrap::-webkit-scrollbar-thumb{border:2.5px solid transparent;border-radius:999px;background:var(--md-outline) padding-box}
-.data-table-wrap::-webkit-scrollbar-corner{background:transparent}
+:is(.data-table-scroll, .log-table-scroll)::-webkit-scrollbar-track:vertical{margin-top:var(--data-head-h);margin-bottom:calc(var(--md-radius-xl) / 2)}
+:is(.data-table-scroll, .log-table-scroll)::-webkit-scrollbar-thumb{border:2.5px solid transparent;border-radius:999px;background:var(--md-outline) padding-box}
+:is(.data-table-scroll, .log-table-scroll)::-webkit-scrollbar-corner{background:transparent}
 .data-table{width:100%;border-collapse:separate;border-spacing:0;text-align:left;font-size:11.2px}
 .data-table th{padding:9.6px 12.8px;background:var(--md-secondary-container);color:var(--md-on-primary-container);
   font-weight:600;white-space:nowrap;position:sticky;top:0;z-index:1}
@@ -1221,3 +1218,5 @@ body[data-admin="false"] #shifts .card .time { position: relative; top: -3px; }
 }
 
 #fieldBoard .field-person .manual-flag { min-height: 1.5em; line-height: 1.5; }
+
+.wiki-head { position: relative; top: -.5em; }

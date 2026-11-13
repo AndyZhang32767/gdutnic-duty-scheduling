@@ -120,18 +120,20 @@ function renderDataPreview() {
       tr.append(td);
     }
     const actions = el('td', 'data-actions');
+    const actionButtons = el('div', 'data-action-buttons');
+    actions.append(actionButtons);
     const edit = el('button', 'btn small tonal', '编辑');
     edit.type = 'button';
     edit.disabled = !data.columns.some(column => column.editable);
     edit.title = edit.disabled ? '这张表不支持在此修改' : '编辑这一行';
     edit.onclick = () => openDataEdit(row);
-    actions.append(edit);
+    actionButtons.append(edit);
     // Protected rows (the 原始管理员, or tables such as 站点设置) get no delete button.
     if (row.deletable !== false) {
       const remove = el('button', 'btn small danger', '删除');
       remove.type = 'button';
       remove.onclick = () => openDataDelete(row);
-      actions.append(remove);
+      actionButtons.append(remove);
     }
     tr.append(actions);
     rows.append(tr);

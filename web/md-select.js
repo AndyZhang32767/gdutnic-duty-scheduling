@@ -53,7 +53,8 @@
     menu.style.maxHeight = '';
     const below = innerHeight - box.bottom - gap - edge, above = box.top - gap - edge;
     const up = below < Math.min(menu.offsetHeight, 200) && above > below;
-    menu.style.maxHeight = `${Math.min(Math.max(up ? above : below, 120), 320)}px`;
+    const heightLimit = menu.classList.contains('grouped') ? 410 : 320;
+    menu.style.maxHeight = `${Math.min(Math.max(up ? above : below, 120), heightLimit)}px`;
     menu.style.minWidth = `${box.width}px`;
     menu.style.left = `${Math.max(edge, Math.min(box.left, innerWidth - menu.offsetWidth - edge))}px`;
     menu.style.top = up ? '' : `${box.bottom + gap}px`;
@@ -66,7 +67,8 @@
     let shown = 0;
     items().forEach((item, index) => {
       const option = owner.options[index];
-      const match = query ? option.value !== '' && option.label.toLowerCase().includes(query) : !option.hidden;
+      const match = !option.hidden && option.value !== ''
+        && (!query || option.label.toLowerCase().includes(query));
       item.hidden = !match;
       if (match) shown += 1;
     });
@@ -75,7 +77,7 @@
     step(1, -1);
   }
 
-  function open(select, focusSearch = true) {
+  function open(select) {
     close();
     owner = select;
     list.replaceChildren(...[...select.options].map((option, index) => {
@@ -86,10 +88,11 @@
       item.textContent = option.label;
       item.classList.toggle('selected', option.selected);
       if (option.disabled) item.setAttribute('aria-disabled', 'true');
-      item.hidden = option.hidden;
+      item.hidden = option.hidden || (select.dataset.search !== undefined && option.value === '');
       return item;
     }));
     const searchable = select.dataset.search !== undefined;
+    menu.classList.toggle('grouped', searchable);
     searchBox.hidden = !searchable;
     empty.hidden = true;
     search.value = '';
@@ -101,8 +104,8 @@
     if (topLayer) menu.showPopover();
     place();
     select.setAttribute('aria-expanded', 'true');
-    if (select.selectedIndex >= 0) setActive(select.selectedIndex); else step(1, -1);
-    if (searchable && focusSearch) search.focus({ preventScroll: true });
+    if (select.selectedIndex >= 0 && usable(items()[select.selectedIndex])) setActive(select.selectedIndex);
+    else step(1, -1);
     requestAnimationFrame(() => menu.classList.add('open'));
   }
 
@@ -148,8 +151,7 @@
     const select = selectAt(event.target);
     if (!select || touchMoved || !event.cancelable) return;
     event.preventDefault();
-    // No autofocus on touch: the on-screen keyboard would cover the list before it is needed.
-    if (select === owner) close(); else open(select, false);
+    if (select === owner) close(); else open(select);
   }, true);
 
   list.addEventListener('click', (event) => {
