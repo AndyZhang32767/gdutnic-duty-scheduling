@@ -283,8 +283,11 @@ def _reject_root(name: str) -> None:
 
 def _require_default_account_grant(actor: str) -> None:
     # A customized default group must not provide a back door around group assignment.
-    default = next(group for group in permissions.list_groups() if group['default'])
-    if set(default['permissions']) & permissions.ADMIN_PERMISSIONS and not permissions.has(actor, 'permission_groups'):
+    with db.read() as conn:
+        default = conn.execute('SELECT permissions FROM permission_groups WHERE id=?',
+                               (permissions.DEFAULT_GROUP,)).fetchone()
+    granted = permissions.decode(default['permissions']) if default else set(permissions.DEFAULT_PERMISSIONS)
+    if granted & permissions.ADMIN_PERMISSIONS and not permissions.has(actor, 'permission_groups'):
         raise HTTPException(403, "默认权限组包含管理权限，创建账号需要权限组管理权限")
 
 
@@ -415,7 +418,9 @@ async def admin_login(request: Request) -> JSONResponse:
 
 @app.post("/api/admin/logout")
 async def admin_logout(request: Request) -> JSONResponse:
-    _log(_admin_username(request), '退出管理端')
+    actor = _session_account(request)
+    if actor:
+        _log(actor, '退出管理端')
     session_policy.revoke(getattr(request.state, 'admin_session_id', None))
     session_policy.revoke(request.session.pop('admin_sid', None))
     request.session.pop("admin_ok", None)
@@ -829,14 +834,15 @@ async def weekly_get(request: Request):
 
 @app.put("/api/admin/weekly-roster")
 async def weekly_save(request: Request):
-    _require_permission(request, "weekly")
+    actor = _require_permission(request, "weekly")
     try:
         roster = weekly_store.save(await request.json())
         _log(_admin_username(request), '保存每周排班模板',
              f"{len(roster.get('slots') or [])} 个班次")
         # Only after the reviewed roster is stored do we create missing duty accounts.
         created = member_store.create_missing(
-            {name for slot in roster['slots'] for names in slot['days'] for name in names})
+            {name for slot in roster['slots'] for names in slot['days'] for name in names},
+            authorize=lambda: _require_default_account_grant(actor))
         return {**roster, "members_created": created['created']}
     except (ValueError, TypeError) as exc:
         raise _schedule_error(exc) from exc
