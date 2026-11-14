@@ -118,10 +118,12 @@ app.add_middleware(
 
 ADMIN_LIMITER = security.AttemptLimiter()
 ACCOUNT_LIMITER = security.AttemptLimiter()
-# Duty-account logins are throttled per source address as well; without it the login
-# form is an unthrottled password oracle for every member account.
+# Canonical account limits isolate failures across users sharing a proxy or NAT.
 MEMBER_LIMITER = security.AttemptLimiter(max_attempts=security.MEMBER_MAX_ATTEMPTS,
                                          window=security.MEMBER_WINDOW_SECONDS)
+# A shared source can throttle failed requests, but must not deny valid credentials.
+MEMBER_IP_LIMITER = security.AttemptLimiter(max_attempts=security.MEMBER_IP_MAX_ATTEMPTS,
+                                            window=security.MEMBER_WINDOW_SECONDS)
 
 
 @app.middleware("http")
@@ -883,18 +885,29 @@ async def member_status(request: Request):
 
 @app.post("/api/member/login")
 async def member_login(request: Request):
-    key = "member:" + security.login_client_key(request)
-    if MEMBER_LIMITER.blocked(key):
-        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
+    source = 'member:source:' + security.login_client_key(request)
     body = await request.json()
     login_name = str(body.get("username") or "").strip()
-    # Root is excluded by authenticate_login and cannot open a duty session.
+    canonical = member_store.resolve_login_name(login_name)
+    key = security.member_login_account_key(canonical)
+    if MEMBER_LIMITER.blocked(key):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
+    # Verify before the source backstop: shared proxy failures cannot block another
+    # account's correct credentials. Per-account limits still guard credential checks.
+    source_blocked = MEMBER_IP_LIMITER.blocked(source)
     account = member_store.authenticate_login(login_name, str(body.get("password") or ""))
     if not account:
         MEMBER_LIMITER.fail(key)
+        MEMBER_IP_LIMITER.fail(source)
+        if source_blocked:
+            raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
         raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
     name, version = account
-    MEMBER_LIMITER.reset(key)
+    actual_key = security.member_login_account_key(name)
+    if actual_key != key and MEMBER_LIMITER.blocked(actual_key):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
+    MEMBER_LIMITER.reset(actual_key)
+    # A successful account must not erase an attacker's accumulated source failures.
     _log(name, '登录值班账号', role='member')
     request.session["member_username"] = name
     request.session["member_version"] = version
@@ -910,17 +923,22 @@ async def member_field_duty(request: Request):
 
 @app.get("/api/member/field-duty/pending")
 async def member_field_pending(request: Request):
-    _require_member_permission(request, "field_confirm")
-    return field_duty.pending()
+    actor = _require_member_permission(request, "field_confirm")
+    return field_duty.pending(exclude_username=actor)
 
 
 @app.post("/api/member/field-duty/pending/{username}")
 async def member_field_confirm(username: str, request: Request):
-    _require_member_permission(request, "field_confirm")
+    actor = _require_member_permission(request, "field_confirm")
+    target = username.strip()
+    if target == actor:
+        raise HTTPException(status_code=403, detail="不能确认本人的外勤登记，请由其他成员确认")
     try:
-        result = field_duty.confirm(username.strip())
-        _log(_require_member_permission(request, "field_confirm"), '确认外勤', username.strip(), role='member')
+        result = field_duty.confirm(target, actor=actor)
+        _log(actor, '确认外勤', target, role='member')
         return result
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except LookupError as exc:
         raise _schedule_error(exc) from exc
 
