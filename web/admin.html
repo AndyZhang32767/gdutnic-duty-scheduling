@@ -48,7 +48,7 @@
       <button type="button" id="logsTab" class="ga-nav-item">查看日志</button>
       <button type="button" id="dataTab" class="ga-nav-item">数据管理</button>
       <button type="button" id="settingsTab" class="ga-nav-item">其他设置</button>
-      <button type="button" id="aboutTab" class="ga-nav-item">关于</button>
+      <button type="button" id="aboutTab" class="ga-nav-item">关于与帮助</button>
     </nav>
     <div class="panel-footer"><button id="logout" class="btn danger" data-icon="logout" hidden>退出登录</button></div>
   </aside>
@@ -94,7 +94,18 @@
       </section>
 
       <section id="aboutPage" hidden>
-        <div class="hero"><div><h1 data-icon="about">关于</h1></div></div>
+        <div class="hero"><div><h1 data-icon="about">关于与帮助</h1></div></div>
+        <article id="wikiPanel" class="about-panel wiki-panel">
+          <p id="wikiStatus" class="wiki-status" role="status">正在读取…</p>
+          <div id="wikiBody" hidden>
+            <p id="wikiPartial" class="wiki-status" hidden>只显示当前账号有权限使用的管理端页面和设置项。</p>
+            <details id="wikiOverviewBox" class="wiki-section wiki-overview" open>
+              <summary><h3>速览</h3><span id="wikiOverviewHint" class="wiki-count"></span></summary>
+              <div id="wikiOverview" class="wiki-tiles"></div>
+            </details>
+            <div id="wikiAreas"></div>
+          </div>
+        </article>
         <article class="about-panel">
           <header class="about-identity">
             <img src="/icon/gdutnic.png" width="64" height="64" alt="网络服务协会标志">
@@ -139,18 +150,7 @@ SOFTWARE.
 </pre></details>
           </footer>
         </article>
-        <article id="wikiPanel" class="about-panel wiki-panel">
-          <header class="wiki-head"><h2 data-icon="clipboard-text-outline">Wiki</h2><p>每个功能在哪里、做什么。</p></header>
-          <p id="wikiStatus" class="wiki-status" role="status">正在读取…</p>
-          <div id="wikiBody" hidden>
-            <p id="wikiPartial" class="wiki-status" hidden>只显示当前账号有权限使用的管理端页面和设置项。</p>
-            <details id="wikiOverviewBox" class="wiki-section wiki-overview" open>
-              <summary><h3>速览</h3><span id="wikiOverviewHint" class="wiki-count"></span></summary>
-              <div id="wikiOverview" class="wiki-tiles"></div>
-            </details>
-            <div id="wikiAreas"></div>
-          </div>
-        </article>
+
       </section>
 
       <section id="weeklyPage" hidden>

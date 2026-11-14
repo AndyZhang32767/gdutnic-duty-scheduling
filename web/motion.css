@@ -12,6 +12,11 @@
   --motion-effects-fast-duration: 150ms;
   --motion-effects-duration: 200ms;
   --motion-effects-slow-duration: 300ms;
+  /* The registration/check-in button keeps its original ease-out curve:
+     its arrow/circle sweep is a single long gesture, not a spring. */
+  --animated-button-ease: cubic-bezier(.23, 1, .32, 1);
+  --animated-button-move-duration: 800ms;
+  --animated-button-state-duration: 600ms;
 }
 :root[data-motion="full"] :is(.btn,.ga-nav-item,.md-select-option,.permission-option,.permission-group-summary,.history-item,.segment) {
   transition: background-color var(--motion-effects-fast-duration) var(--motion-effects-fast),
@@ -93,13 +98,15 @@
   :root[data-motion="full"] .ga-app.nav-open .ga-nav { transition-delay:0s; }
   :root[data-motion="full"] .nav-scrim { transition:opacity var(--motion-effects-duration) linear; }
 }
-/* Idle buttons keep their hover emphasis; committed states remain locked. */
+/* Idle buttons keep their hover emphasis; committed states remain locked.
+   This control deliberately stays on the traditional ease-out curve instead of the
+   shared expressive springs: it animates a sweep, not a spatial retarget. */
 :root[data-motion="full"] .animated-button {
-  transition:background-color var(--motion-effects-duration) var(--motion-effects),color var(--motion-effects-duration) var(--motion-effects),border-radius var(--motion-spatial-fast-duration) var(--motion-spatial-fast),box-shadow var(--motion-effects-duration) var(--motion-effects);
+  transition:background-color var(--animated-button-state-duration) var(--animated-button-ease),color var(--animated-button-state-duration) var(--animated-button-ease),border-radius var(--animated-button-state-duration) var(--animated-button-ease),box-shadow var(--animated-button-state-duration) var(--animated-button-ease);
 }
 .animated-button:not(.registered):not(.pending):not(:disabled) .circle {
   width:220px;height:220px;opacity:0;transform:translate(-50%,-50%) scale(.09);
-  transition:transform var(--motion-spatial-duration) var(--motion-spatial),opacity var(--motion-effects-duration) var(--motion-effects);
+  transition:transform var(--animated-button-move-duration) var(--animated-button-ease),opacity var(--animated-button-move-duration) var(--animated-button-ease);
 }
 .animated-button:not(.registered):not(.pending):not(:disabled):hover .circle,
 .animated-button:not(.registered):not(.pending):not(:disabled):focus-visible .circle {
@@ -116,7 +123,7 @@
   box-shadow:0 0 0 4px var(--schedule-success-outline, #a7dfa7);
 }
 .animated-button:not(.registered):not(.pending):not(:disabled) svg { fill:currentColor; }
-:root[data-motion="full"] .animated-button :is(svg,.text) { transition:transform var(--motion-spatial-fast-duration) var(--motion-spatial-fast); }
+:root[data-motion="full"] .animated-button :is(svg,.text) { transition:transform var(--animated-button-move-duration) var(--animated-button-ease); }
 .animated-button .arr-1 { right:16px;transform:translateX(0); }
 .animated-button .arr-2 { left:16px;transform:translateX(-64px); }
 .animated-button:not(.registered):not(.pending):not(:disabled):hover .arr-1 { right:16px;transform:translateX(64px); }

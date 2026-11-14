@@ -1048,7 +1048,8 @@ select {
 @media (max-width: 650px) { #settingsPage .card { --pad: 16px; } }
 
 /* About page: the Wiki card (feature guide rendered from description/description.md). */
-.wiki-panel { margin-top: 20px; }
+#aboutPage > .about-panel { margin-top: 0; }
+#aboutPage > .about-panel + .about-panel { margin-top: 20px; }
 .wiki-head h2 { margin: 0 0 6px; font-size: 20px; color: var(--md-on-surface); }
 .wiki-head p, .wiki-status { margin: 0; color: var(--md-on-surface-variant); line-height: 1.8; }
 .wiki-status { margin-top: 16px; }

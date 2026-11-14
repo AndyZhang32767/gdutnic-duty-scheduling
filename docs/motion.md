@@ -37,13 +37,19 @@ this app; unused FAB/carousel/slider components were not introduced.
 | Page navigation | Fade-through / small scale change only when a hidden page becomes visible |
 | Details / expandable lists | Intrinsic block-size transition, content visibility and indicator rotation |
 | Chips / tags and actionable list rows | Effects transitions; no decorative hover movement on static cards |
-| Registration/check-in button | Shape and state transition; replaces the unrelated arrow/circle sweep |
+| Registration/check-in button | Deliberately **not** a spring: the original 800ms/600ms `cubic-bezier(.23,1,.32,1)` ease-out drives the arrow/circle sweep and state colors |
 
 `motion.js` samples the analytic unit-mass spring equation using the official expressive
 stiffness and damping tokens into CSS `linear()` easing. CSS durations are chosen from
 position and velocity settling, so the timing follows the spring rather than arbitrary
 per-control easing. Native Web implementations above also use fixed easing/duration;
 the ripple retains its documented press timing, while menus/dialog movement now use the shared expressive spring profiles.
+
+The registration/check-in button is the one intentional exception. Its arrow and
+expanding circle are a single long sweep rather than a spatial retarget, and an
+overshooting spring visibly wobbles the 220px circle. It therefore keeps its original
+traditional ease-out curve (`--animated-button-ease`, 800ms movement / 600ms state),
+defined in `motion.css` so it still collapses under the reduced-motion policy.
 
 ## Boundaries
 
