@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+import logging
 import os
 import secrets
 import time
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
+from string import Template
+from threading import BoundedSemaphore
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import Response, FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from server import attendance_live, checkin_access, session_policy, admin_store, data_admin, db, duty_settings, field_duty, log_rotation, mailer, operation_log, overview, permissions, push_reports, table_rotation, root_admin, schedule_store, swap_store, system_clock, weekly_store, member_store, security
@@ -68,7 +74,10 @@ async def lifespan(_app: FastAPI):
     system_clock.load()
     with db.read() as conn:
         operation_log.init(conn)
-    result = member_store.provision()
+    retired = await run_in_threadpool(member_store.retire_shared_passwords)
+    if retired:
+        print(f"[members] 已停用 {retired} 个旧初始密码，请管理员按需重置")
+    result = await run_in_threadpool(member_store.provision)
     print(f"[members] 新建普通用户账号 {result['created']} 个，保留现有账号 {result['existing']} 个")
     slug = admin_store.path()
     # An installed site that predates the root account gets one on this boot.
@@ -95,14 +104,63 @@ async def lifespan(_app: FastAPI):
                 await task
 
 
+NO_CACHE = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 class NoCacheStatic(StaticFiles):
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
         # Old scripts must never survive a deploy; browsers revalidate every static file.
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
+        response.headers.update(NO_CACHE)
         return response
+
+
+PUBLIC_WEB_ASSETS = frozenset("""
+    auth.css auth-background.js base.css browser-motion.js component-icons.css
+    keycloak-bind.js keycloak-login.js login.js motion.css motion.js
+    password-visibility.js ripple.js theme.css theme.js
+""".split())
+SHARED_WEB_ASSETS = frozenset("""
+    animated-button.js attendance-live.js checkin-window.js idle-session.js
+    nav-drawer.js outlined-fields.js schedule.js shift-timeline.js week-board.js
+    workspace.css
+""".split())
+MEMBER_WEB_ASSETS = frozenset("""
+    field-confirm.js field-duty.js member-network.js member-schedules.js member.css
+""".split())
+ADMIN_WEB_ASSETS = frozenset("""
+    about.js admin.css checkin-access.js data-admin.js delete-confirm.js field-admin.js
+    logs.js md-select.js member-student-csv.js members.js overview.js
+    permission-groups.js permission-tree.js push-layout.js push.js range-clear.js
+    search-bar.js settings-save-all.js settings.js special.js sso-settings.js
+    status-editor.js swaps.js weekly-import.js weekly.js
+""".split())
+
+
+def _authorize_web_asset(request, path):
+    if path in ADMIN_WEB_ASSETS:
+        _require_admin(request)
+    elif path in MEMBER_WEB_ASSETS:
+        _require_member(request)
+    elif path in SHARED_WEB_ASSETS:
+        if not _admin_ok(request):
+            _require_member(request)
+    else:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+
+class WebStatic(NoCacheStatic):
+    async def get_response(self, path, scope):
+        if path not in PUBLIC_WEB_ASSETS:
+            try:
+                await run_in_threadpool(_authorize_web_asset, Request(scope), path)
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=NO_CACHE)
+        return await super().get_response(path, scope)
 
 
 app = FastAPI(title="网络服务协会 排班签到", lifespan=lifespan)
@@ -121,15 +179,18 @@ ACCOUNT_LIMITER = security.AttemptLimiter()
 # Canonical account limits isolate failures across users sharing a proxy or NAT.
 MEMBER_LIMITER = security.AttemptLimiter(max_attempts=security.MEMBER_MAX_ATTEMPTS,
                                          window=security.MEMBER_WINDOW_SECONDS)
-# A shared source can throttle failed requests, but must not deny valid credentials.
+# Combine the caller and account when tracking repeated mistakes from one source.
 MEMBER_IP_LIMITER = security.AttemptLimiter(max_attempts=security.MEMBER_IP_MAX_ATTEMPTS,
                                             window=security.MEMBER_WINDOW_SECONDS)
+LOGIN_VERIFICATION_SLOTS = BoundedSemaphore(8)
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path in {'/api/attendance/live', '/api/session/heartbeat'}:
+    if request.url.path.startswith('/static/') or request.url.path in {
+        '/api/attendance/live', '/api/session/heartbeat', '/api/auth/keycloak/status',
+    }:
         # These read-only requests may finish after a logout/login in another tab.
         # Do not let their old session snapshot replace the browser's newer cookie.
         response.raw_headers = [(key, value) for key, value in response.raw_headers
@@ -193,7 +254,7 @@ def _admin_from_cookie(request: Request) -> str:
     return ""
 
 
-app.mount("/static", NoCacheStatic(directory=WEB), name="static")
+app.mount("/static", WebStatic(directory=WEB), name="static")
 ICON.mkdir(parents=True, exist_ok=True)
 app.mount("/icon", NoCacheStatic(directory=ICON), name="icon")
 
@@ -207,21 +268,160 @@ async def favicon():
 
 
 @app.get("/")
-async def index():
+def index(request: Request):
     if not admin_store.has_user():
-        return RedirectResponse(f"/{admin_store.path()}", status_code=302)
-    return FileResponse(
-        WEB / "index.html",
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+        return RedirectResponse(f"/{admin_store.path()}", status_code=302, headers=NO_CACHE)
+    try:
+        _require_member(request)
+    except HTTPException:
+        return _login_page(request)
+    return FileResponse(WEB / "index.html", headers=NO_CACHE)
 
 
 def _admin_gate(request: Request) -> bool:
     return request.session.get("admin_gate") == admin_store.path()
+
+
+def _login_page(request: Request, slug="", error="", status_code=200, change_required=False):
+    role = "admin" if slug else "member"
+    token_key = f"login_csrf_{role}"
+    token = request.session.get(token_key)
+    if not token:
+        token = request.session[token_key] = secrets.token_urlsafe(32)
+    values = {"login_action": "/" + slug, "login_csrf": token, "login_error": error,
+              "password_change_hidden": "" if change_required else "hidden",
+              "password_change_required": "required" if change_required else "disabled"}
+    if slug:
+        registering = not admin_store.has_user()
+        values.update(
+            registering="true" if registering else "false",
+            username_required="" if registering else "required",
+            username_placeholder="原始管理员" if registering else " ",
+            auth_title="创建原始管理员" if registering else "管理员登录",
+            auth_hint=("首次创建「原始管理员」，可自定义名称，留空则使用默认名称。"
+                       if registering else "登录后维护班次与值班人员，查看签到记录。"),
+            auth_submit="创建原始管理员" if registering else "登录",
+        )
+    template = Template((WEB / f"{role}-login.html").read_text(encoding="utf-8"))
+    page = template.substitute({key: escape(value, quote=True) for key, value in values.items()})
+    return HTMLResponse(page, status_code=status_code, headers=NO_CACHE)
+
+
+def _verify_login_csrf(request, role, token):
+    expected = request.session.get(f"login_csrf_{role}")
+    if (not isinstance(token, str) or not token.isascii() or not expected
+            or not secrets.compare_digest(token, expected)):
+        raise HTTPException(403, "登录页面已过期或浏览器未保存会话，请刷新后重试")
+
+
+def _origin_parts(url):
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username is not None:
+        raise ValueError
+    return parts.scheme, parts.hostname, parts.port
+
+
+async def _login_json(request, role):
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type != "application/json":
+        raise HTTPException(415, "登录接口需要 JSON 请求")
+    origin = request.headers.get("origin")
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site != "same-origin":
+        raise HTTPException(403, "登录请求来源无效")
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "登录请求格式错误") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(400, "登录请求格式错误")
+    # API clients without browser origin metadata can continue to submit JSON.
+    if origin is not None or site is not None or "login_csrf" in body:
+        _verify_login_csrf(request, role, body.get("login_csrf"))
+    if origin is not None:
+        try:
+            public_url = os.environ.get("PUBLIC_BASE_URL", "").strip()
+            target_url = public_url or str(request.base_url)
+            if not public_url and security.trusted_proxy(request):
+                scheme = request.headers.get("x-forwarded-proto")
+                if scheme in {"http", "https"}:
+                    target_url = str(request.base_url.replace(scheme=scheme))
+                    public_url = target_url
+            actual = _origin_parts(origin)
+            expected = _origin_parts(target_url)
+            def effective_origin(parts):
+                scheme, host, port = parts
+                return scheme, host, port or (443 if scheme == "https" else 80)
+            # HTTPS termination may be outside ASGI. A valid token and the browser's
+            # exact same-origin assertion cover this case on the same hostname.
+            tls_offload = (not public_url and site == "same-origin"
+                           and actual == ("https", expected[1], None) and expected == ("http", expected[1], None))
+            if effective_origin(actual) != effective_origin(expected) and not tls_offload:
+                raise ValueError
+        except ValueError as exc:
+            raise HTTPException(403, "登录请求来源无效") from exc
+    return body
+
+
+async def _verify_login(check, *args):
+    # Limit concurrent password hashes, while keeping the event loop responsive.
+    if not LOGIN_VERIFICATION_SLOTS.acquire(blocking=False):
+        raise HTTPException(503, "登录服务繁忙，请稍后重试", headers={"Retry-After": "1"})
+    try:
+        return await run_in_threadpool(check, *args)
+    finally:
+        LOGIN_VERIFICATION_SLOTS.release()
+
+
+async def _failed_login(source_limiter, source_key, account_limiter, account_key, message, window):
+    throttled = source_limiter.blocked(source_key) or account_limiter.blocked(account_key)
+    source_reached = source_limiter.fail(source_key)
+    account_reached = account_limiter.fail(account_key)
+    if source_reached or account_reached:
+        logging.getLogger(__name__).warning("Login failure limit reached (%s)", account_key)
+    if throttled:
+        await asyncio.sleep(0.15)
+        raise HTTPException(429, "登录尝试过于频繁，请稍后重试", headers={"Retry-After": str(window)})
+    raise HTTPException(401, message)
+
+
+async def _replace_temporary_password(name, old_password, new_password):
+    change_header = {"X-Password-Change-Required": "1"}
+    if not new_password:
+        raise HTTPException(409, "请设置新密码后登录", headers=change_header)
+    try:
+        return await _verify_login(member_store.change_password, name, old_password, new_password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc), headers=change_header) from exc
+
+
+async def _submit_login_form(request: Request, slug=""):
+    role = "admin" if slug else "member"
+    try:
+        if request.headers.get("content-type", "").split(";", 1)[0] != "application/x-www-form-urlencoded":
+            raise HTTPException(400, "请通过登录表单提交")
+        async with request.form() as form:
+            _verify_login_csrf(request, role, form.get("login_csrf"))
+            body = {key: form.get(key) for key in ("username", "password", "new_password")}
+        if slug:
+            handler = _admin_login if admin_store.has_user() else _admin_register
+        else:
+            handler = _member_login
+        result = await handler(request, body)
+    except HTTPException as exc:
+        change_required = (exc.headers or {}).get("X-Password-Change-Required") == "1"
+        return _login_page(request, slug, str(exc.detail), exc.status_code, change_required)
+    redirect = RedirectResponse("/" + slug, status_code=303, headers=NO_CACHE)
+    if isinstance(result, Response):
+        redirect.raw_headers.extend((key, value) for key, value in result.raw_headers if key == b"set-cookie")
+    return redirect
+
+
+@app.post("/")
+async def member_login_form(request: Request):
+    if not admin_store.has_user():
+        return RedirectResponse(f"/{admin_store.path()}", status_code=303, headers=NO_CACHE)
+    return await _submit_login_form(request)
 
 
 def _log(actor, action, detail='', role='admin'):
@@ -339,13 +539,18 @@ async def admin_status(request: Request) -> dict[str, Any]:
 
 @app.post("/api/admin/register")
 async def admin_register(request: Request) -> dict[str, Any]:
+    return await _admin_register(request)
+
+
+async def _admin_register(request: Request, body=None):
     if not _admin_gate(request):
         raise HTTPException(status_code=403, detail="请从控制台提示的管理员网址进入")
     # The real guard is the root credential file, not the `setup_done` setting: that row
     # also lives in the database and must never be able to reopen registration.
     if root_admin.exists() or admin_store.has_user():
         raise HTTPException(status_code=409, detail="管理员已注册，请直接登录")
-    body = await request.json()
+    if body is None:
+        body = await _login_json(request, "admin")
     # The first account is the 原始管理员. Its name may be chosen here (空白时用内置名称)
     # and its credentials live in data/root_admin.json rather than the database.
     password = str(body.get("password") or "")
@@ -369,34 +574,35 @@ async def admin_register(request: Request) -> dict[str, Any]:
 
 @app.post("/api/admin/login")
 async def admin_login(request: Request) -> JSONResponse:
+    return await _admin_login(request)
+
+
+async def _admin_login(request: Request, body=None):
     if not _admin_gate(request):
         raise HTTPException(status_code=403, detail="请从控制台提示的管理员网址进入")
-    key = "admin:" + security.login_client_key(request)
-    if ADMIN_LIMITER.blocked(key):
-        raise HTTPException(status_code=429, detail="管理员登录尝试过于频繁，请在限制开始 10 分钟后重试")
-    body = await request.json()
+    if body is None:
+        body = await _login_json(request, "admin")
     login_name = str(body.get("username") or "").strip()
     password = str(body.get("password") or "")
-    username = member_store.resolve_login_name(login_name)
-    account_key = "admin:" + username.casefold()
-    if ACCOUNT_LIMITER.blocked(account_key):
-        raise HTTPException(status_code=429, detail="管理员登录尝试过于频繁，请在限制开始 10 分钟后重试")
     # The 原始管理员 authenticates against its own file, never the account table.
     is_root = root_admin.is_root(login_name)
     if is_root:
-        version = root_admin.session_version() if root_admin.verify(password) else None
+        username, change_required = login_name, False
+        version = await _verify_login(root_admin.authenticate, password)
     else:
-        account = member_store.authenticate_login(login_name, password)
-        username, version = account if account else (username, None)
+        username, version, change_required = await _verify_login(member_store.login_attempt, login_name, password)
+    account_key = security.login_account_key("admin", username)
+    key = security.login_client_key(request) + ":" + account_key
     if not version:
-        ADMIN_LIMITER.fail(key)
-        ACCOUNT_LIMITER.fail(account_key)
-        raise HTTPException(status_code=401, detail="用户名或密码不正确")
+        await _failed_login(ADMIN_LIMITER, key, ACCOUNT_LIMITER, account_key,
+                            "用户名或密码不正确", security.WINDOW_SECONDS)
     # Administrator pages are open to any account with at least one admin permission.
     if not is_root and not permissions.is_admin(username):
         ADMIN_LIMITER.fail(key)
         ACCOUNT_LIMITER.fail(account_key)
         raise HTTPException(status_code=403, detail="该账号没有管理员权限")
+    if change_required:
+        version = await _replace_temporary_password(username, password, body.get("new_password"))
     ADMIN_LIMITER.reset(key)
     ACCOUNT_LIMITER.reset(account_key)
     _log(username, '登录管理端')
@@ -833,10 +1039,11 @@ async def weekly_save(request: Request):
         _log(_admin_username(request), '保存每周排班模板',
              f"{len(roster.get('slots') or [])} 个班次")
         # Only after the reviewed roster is stored do we create missing duty accounts.
-        created = member_store.create_missing(
+        created = await run_in_threadpool(member_store.create_missing,
             {name for slot in roster['slots'] for names in slot['days'] for name in names},
             authorize=lambda: _require_default_account_grant(actor))
-        return {**roster, "members_created": created['created']}
+        return JSONResponse({**roster, "members_created": created['created'],
+                             "temporary_passwords": created['temporary_passwords']}, headers=NO_CACHE)
     except (ValueError, TypeError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -885,29 +1092,23 @@ async def member_status(request: Request):
 
 @app.post("/api/member/login")
 async def member_login(request: Request):
-    source = 'member:source:' + security.login_client_key(request)
-    body = await request.json()
+    return await _member_login(request)
+
+
+async def _member_login(request: Request, body=None):
+    if body is None:
+        body = await _login_json(request, "member")
     login_name = str(body.get("username") or "").strip()
-    canonical = member_store.resolve_login_name(login_name)
-    key = security.member_login_account_key(canonical)
-    if MEMBER_LIMITER.blocked(key):
-        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
-    # Verify before the source backstop: shared proxy failures cannot block another
-    # account's correct credentials. Per-account limits still guard credential checks.
-    source_blocked = MEMBER_IP_LIMITER.blocked(source)
-    account = member_store.authenticate_login(login_name, str(body.get("password") or ""))
-    if not account:
-        MEMBER_LIMITER.fail(key)
-        MEMBER_IP_LIMITER.fail(source)
-        if source_blocked:
-            raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
-        raise HTTPException(status_code=401, detail="姓名或密码不正确，或账号已停用")
-    name, version = account
-    actual_key = security.member_login_account_key(name)
-    if actual_key != key and MEMBER_LIMITER.blocked(actual_key):
-        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后重试")
-    MEMBER_LIMITER.reset(actual_key)
-    # A successful account must not erase an attacker's accumulated source failures.
+    password = str(body.get("password") or "")
+    name, version, change_required = await _verify_login(member_store.login_attempt, login_name, password)
+    key = security.login_account_key("member", name)
+    source_key = security.login_client_key(request) + ":" + key
+    if not version:
+        await _failed_login(MEMBER_IP_LIMITER, source_key, MEMBER_LIMITER, key,
+                            "姓名或密码不正确，或账号已停用", security.MEMBER_WINDOW_SECONDS)
+    if change_required:
+        version = await _replace_temporary_password(name, password, body.get("new_password"))
+    MEMBER_LIMITER.reset(key)
     _log(name, '登录值班账号', role='member')
     request.session["member_username"] = name
     request.session["member_version"] = version
@@ -1086,6 +1287,43 @@ async def admin_root_password(request: Request):
     return {"ok": True}
 
 
+@app.post("/api/admin/password")
+@app.put("/api/admin/members/password")
+async def admin_password(request: Request):
+    actor = _session_account(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="请先登录管理员")
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="密码格式不正确") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="密码格式不正确")
+    if request.method == "PUT":
+        if not permissions.has(actor, "members"):
+            raise HTTPException(status_code=403, detail="当前账号没有此权限")
+        if body.get("username") != actor:
+            raise HTTPException(status_code=403, detail="只能更改自己的密码，其他账号请使用重置密码")
+    old_password = body.get("old_password")
+    new_password = body.get("new_password", body.get("password") if request.method == "PUT" else None)
+    if not isinstance(old_password, str) or not isinstance(new_password, str):
+        raise HTTPException(status_code=400, detail="请填写当前密码和新密码")
+    try:
+        if root_admin.is_root(actor):
+            updated = await run_in_threadpool(root_admin.change_password, new_password, old_password=old_password)
+            version = updated["version"]
+        else:
+            version = await run_in_threadpool(member_store.change_password, actor, old_password, new_password)
+        _log(actor, '修改个人密码')
+    except (ValueError, LookupError) as exc:
+        raise _schedule_error(exc) from exc
+    session_id = request.state.admin_session_id
+    request.session.update(admin_ok=True, admin_username=actor, admin_sid=session_id, admin_version=version)
+    response = JSONResponse({"ok": True}, headers=NO_CACHE)
+    _set_admin_cookie(response, actor, session_id, version=version)
+    return response
+
+
 @app.post("/api/member/logout")
 async def member_logout(request: Request):
     session_policy.revoke(request.session.pop("member_sid", None))
@@ -1099,16 +1337,16 @@ async def member_password(request: Request):
     name = _require_member(request)
     body = await request.json()
     try:
-        member_store.change_password(name, str(body.get("old_password") or ""), str(body.get("new_password") or ""))
+        version = member_store.change_password(name, str(body.get("old_password") or ""), str(body.get("new_password") or ""))
         _log(name, '修改个人密码', role='member')
     except ValueError as exc:
         raise _schedule_error(exc) from exc
-    request.session["member_version"] = member_store.session_version(name)
+    request.session["member_version"] = version
     return {"ok": True}
 
 
 @app.get("/api/admin/push")
-async def push_get(request: Request):
+def push_get(request: Request):
     _require_permission(request, "push")
     return push_reports.status()
 
@@ -1124,6 +1362,14 @@ async def push_save(request: Request):
     return push_reports.status()
 
 
+@app.get("/api/admin/push/preview")
+def push_preview_data(request: Request, weeks: int):
+    _require_permission(request, "push")
+    if weeks not in (1, 2, 4):
+        raise HTTPException(status_code=422, detail="推送频率只能选择 1、2、4 周一次")
+    return JSONResponse(push_reports.preview_data(weeks), headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/admin/push/preview")
 async def push_preview(request: Request):
     _require_permission(request, "push")
@@ -1132,7 +1378,7 @@ async def push_preview(request: Request):
         if not isinstance(body, dict):
             raise ValueError('预览配置格式不正确')
         config = push_reports.validate(body.get('config'))
-        return push_reports.report(config, sample=body.get('sample') is True)
+        return await asyncio.to_thread(push_reports.report, config, sample=body.get('sample') is True)
     except (ValueError, TypeError) as exc:
         raise _schedule_error(exc) from exc
 
@@ -1283,29 +1529,6 @@ async def admin_member_student_id(request: Request):
     return {"ok": True}
 
 
-@app.put("/api/admin/members/password")
-async def admin_member_password(request: Request):
-    actor = _require_permission(request, "members")
-    body = await request.json()
-    name = str(body.get("username") or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="请指定账号")
-    if root_admin.is_root(name):
-        # Only the root itself may rotate its own password, through its own endpoint.
-        if name != actor:
-            raise HTTPException(status_code=403, detail="原始管理员的密码只能由本人修改")
-        raise HTTPException(status_code=400, detail="原始管理员请使用专用入口修改密码")
-    # Only the account itself or a holder of "更改权限" may set a password.
-    if not _may_manage(name, actor):
-        raise HTTPException(status_code=403, detail="操作管理员账号需要权限组管理权限")
-    try:
-        member_store.set_password(name, str(body.get("password") or ""))
-        _log(_admin_username(request), '更改账号密码', name)
-    except (ValueError, LookupError) as exc:
-        raise _schedule_error(exc) from exc
-    return {"ok": True}
-
-
 @app.post("/api/admin/members/provision")
 async def admin_provision_members(request: Request):
     actor = _session_account(request)
@@ -1314,10 +1537,10 @@ async def admin_provision_members(request: Request):
     if not any(permissions.has(actor, p) for p in ('members', 'weekly')):
         raise HTTPException(status_code=403, detail="当前账号没有此权限")
     _require_default_account_grant(actor)
-    result = member_store.provision()
+    result = await run_in_threadpool(member_store.provision, authorize=lambda: _require_default_account_grant(actor))
     _log(_admin_username(request), '补齐排班人员账号',
          f"新建 {result['created']} 个，已存在 {result['existing']} 个")
-    return result
+    return JSONResponse(result, headers=NO_CACHE)
 
 
 @app.post("/api/admin/members/cleanup")
@@ -1334,9 +1557,9 @@ async def admin_add_member(request: Request):
     _require_default_account_grant(actor)
     body = await request.json()
     try:
-        result = member_store.create(body.get("username"))
+        result = await run_in_threadpool(member_store.create, body.get("username"))
         _log(_admin_username(request), '添加账号', str(body.get("username") or ""))
-        return result
+        return JSONResponse(result, headers=NO_CACHE)
     except ValueError as exc:
         raise _schedule_error(exc) from exc
 
@@ -1369,21 +1592,23 @@ async def admin_update_member(request: Request):
         raise HTTPException(status_code=400, detail="账号状态格式错误")
     target = str(body.get("username") or "").strip()
     _reject_root(target)
+    reset_password = body.get("reset_password") is True
+    if reset_password and target == actor:
+        raise HTTPException(status_code=403, detail="请使用更改密码修改自己的密码")
     # Changing state or resetting a password of a privileged account needs the grant right.
     if not _may_manage(target, actor):
         raise HTTPException(status_code=403, detail="该账号拥有权限，需具备更改权限的资格才能操作")
     try:
-        target = str(body.get("username") or "")
-        member_store.update(target, body.get("active"), body.get("reset_password") is True)
+        credential = await run_in_threadpool(member_store.update, target, body.get("active"), reset_password)
         changes = []
         if "active" in body:
             changes.append('启用' if body.get("active") else '停用')
-        if body.get("reset_password") is True:
+        if reset_password:
             changes.append('重置密码')
         _log(_admin_username(request), '修改账号', f"{target}：{'、'.join(changes) or '无变化'}")
     except ValueError as exc:
         raise _schedule_error(exc) from exc
-    return {"ok": True}
+    return JSONResponse({"ok": True, "temporary_passwords": [credential] if credential else []}, headers=NO_CACHE)
 
 
 @app.get("/api/admin/session-timeout")
@@ -1500,22 +1725,24 @@ async def admin_about(request: Request):
     from server import wiki
     from server.app_version import VERSION
     guide = wiki.for_account(permissions.permissions_of(name), root_admin.is_root(name))
-    return {"version": VERSION, "guide": guide}
+    return JSONResponse({"version": VERSION, "guide": guide}, headers=NO_CACHE)
 
 
 @app.get("/{slug}")
-async def admin_page(slug: str, request: Request):
+def admin_page(slug: str, request: Request):
     if len(slug) != 8 or slug != admin_store.path():
         raise HTTPException(status_code=404, detail="页面不存在")
     request.session["admin_gate"] = slug
-    return FileResponse(
-        WEB / "admin.html",
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+    if _admin_ok(request):
+        return FileResponse(WEB / "admin.html", headers=NO_CACHE)
+    return _login_page(request, slug)
+
+
+@app.post("/{slug}")
+async def admin_login_form(slug: str, request: Request):
+    if len(slug) != 8 or slug != admin_store.path():
+        raise HTTPException(status_code=404, detail="页面不存在")
+    return await _submit_login_form(request, slug)
 
 
 @app.get("/api/network-access")
